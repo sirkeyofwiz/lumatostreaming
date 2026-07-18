@@ -1,4 +1,4 @@
-# Reelhouse
+# Lumatostreaming
 
 A small full-stack movie/TV catalog browser: Node/Express API, a swappable SQLite/Postgres database, user accounts with per-user watchlists, and an admin panel for managing the catalog. All titles, cast, and descriptions are original/fictional — this is a UI and architecture demo, not a real streaming service (there's no video playback).
 
