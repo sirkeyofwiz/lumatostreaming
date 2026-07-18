@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'reelhouse-dev-secret-change-me',
+  secret: process.env.SESSION_SECRET || 'lumatostreaming-dev-secret-change-me',
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -199,5 +199,5 @@ app.delete('/api/admin/titles/:id', requireAdmin, async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Reelhouse server running at http://localhost:${PORT}`);
+  console.log(`LumatoStreaming server running at http://localhost:${PORT}`);
 });
