@@ -8,6 +8,18 @@ const db = require('./db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Safety net: log unexpected errors instead of letting them crash the
+// whole process. Express 4 doesn't catch rejected promises from async
+// route handlers on its own — every route below is wrapped with `ah()`
+// to route errors into Express's error handler, but this is a backstop
+// for anything that slips through (e.g. errors outside a request).
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(session({
@@ -30,6 +42,13 @@ app.use(async (req, res, next) => {
   next();
 });
 
+// Wraps an async route handler so a rejected promise (e.g. a failed DB
+// query) is passed to Express's error handler instead of crashing the
+// process.
+function ah(fn) {
+  return (req, res, next) => fn(req, res, next).catch(next);
+}
+
 function requireAuth(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: 'Sign in required.' });
   next();
@@ -47,7 +66,7 @@ function publicUser(u) {
 
 // ---------- Auth ----------
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', ah(async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password || password.length < 6) {
     return res.status(400).json({ error: 'Username and a password of at least 6 characters are required.' });
@@ -63,9 +82,9 @@ app.post('/api/auth/register', async (req, res) => {
   const user = { id: result.lastID, username, is_admin: 0 };
   req.session.user = publicUser(user);
   res.status(201).json(req.session.user);
-});
+}));
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', ah(async (req, res) => {
   const { username, password } = req.body || {};
   const user = await db.get('SELECT * FROM users WHERE username = ?', [username || '']);
   if (!user) return res.status(401).json({ error: 'Incorrect username or password.' });
@@ -73,7 +92,7 @@ app.post('/api/auth/login', async (req, res) => {
   if (!ok) return res.status(401).json({ error: 'Incorrect username or password.' });
   req.session.user = publicUser(user);
   res.json(req.session.user);
-});
+}));
 
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
@@ -92,12 +111,12 @@ async function withWatchlistFlag(rows, userId) {
   return rows.map(r => ({ ...r, in_watchlist: ownedIds.has(r.id) }));
 }
 
-app.get('/api/genres', async (req, res) => {
+app.get('/api/genres', ah(async (req, res) => {
   const rows = await db.all('SELECT DISTINCT genre FROM titles ORDER BY genre');
   res.json(rows.map(r => r.genre));
-});
+}));
 
-app.get('/api/titles', async (req, res) => {
+app.get('/api/titles', ah(async (req, res) => {
   const { type, genre, q, sort } = req.query;
   let sql = 'SELECT * FROM titles WHERE 1=1';
   const params = [];
@@ -112,23 +131,23 @@ app.get('/api/titles', async (req, res) => {
 
   const rows = await db.all(sql, params);
   res.json(await withWatchlistFlag(rows, req.session.user && req.session.user.id));
-});
+}));
 
-app.get('/api/titles/featured', async (req, res) => {
+app.get('/api/titles/featured', ah(async (req, res) => {
   const rows = await db.all('SELECT * FROM titles WHERE featured = 1');
   res.json(await withWatchlistFlag(rows, req.session.user && req.session.user.id));
-});
+}));
 
-app.get('/api/titles/:id', async (req, res) => {
+app.get('/api/titles/:id', ah(async (req, res) => {
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Title not found.' });
   const [withFlag] = await withWatchlistFlag([row], req.session.user && req.session.user.id);
   res.json(withFlag);
-});
+}));
 
 // ---------- Watchlist (per signed-in user) ----------
 
-app.get('/api/watchlist', requireAuth, async (req, res) => {
+app.get('/api/watchlist', requireAuth, ah(async (req, res) => {
   const rows = await db.all(`
     SELECT t.* FROM titles t
     JOIN watchlist w ON w.title_id = t.id
@@ -136,30 +155,30 @@ app.get('/api/watchlist', requireAuth, async (req, res) => {
     ORDER BY w.added_at DESC
   `, [req.session.user.id]);
   res.json(await withWatchlistFlag(rows, req.session.user.id));
-});
+}));
 
-app.post('/api/watchlist', requireAuth, async (req, res) => {
+app.post('/api/watchlist', requireAuth, ah(async (req, res) => {
   const { titleId } = req.body || {};
   const title = await db.get('SELECT id FROM titles WHERE id = ?', [titleId]);
   if (!title) return res.status(404).json({ error: 'Title not found.' });
   const exists = await db.get('SELECT id FROM watchlist WHERE user_id = ? AND title_id = ?', [req.session.user.id, titleId]);
   if (!exists) await db.run('INSERT INTO watchlist (user_id, title_id) VALUES (?, ?)', [req.session.user.id, titleId]);
   res.status(201).json({ ok: true });
-});
+}));
 
-app.delete('/api/watchlist/:titleId', requireAuth, async (req, res) => {
+app.delete('/api/watchlist/:titleId', requireAuth, ah(async (req, res) => {
   await db.run('DELETE FROM watchlist WHERE user_id = ? AND title_id = ?', [req.session.user.id, req.params.titleId]);
   res.json({ ok: true });
-});
+}));
 
 // ---------- Admin catalog management ----------
 
-app.get('/api/admin/titles', requireAdmin, async (req, res) => {
+app.get('/api/admin/titles', requireAdmin, ah(async (req, res) => {
   const rows = await db.all('SELECT * FROM titles ORDER BY id DESC');
   res.json(rows);
-});
+}));
 
-app.post('/api/admin/titles', requireAdmin, async (req, res) => {
+app.post('/api/admin/titles', requireAdmin, ah(async (req, res) => {
   const t = req.body || {};
   if (!t.title || !t.type || !t.year || !t.genre || !t.rating) {
     return res.status(400).json({ error: 'title, type, year, genre, and rating are required.' });
@@ -172,9 +191,9 @@ app.post('/api/admin/titles', requireAdmin, async (req, res) => {
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [result.lastID]);
   res.status(201).json(row);
-});
+}));
 
-app.put('/api/admin/titles/:id', requireAdmin, async (req, res) => {
+app.put('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
   const t = req.body || {};
   const existing = await db.get('SELECT * FROM titles WHERE id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Title not found.' });
@@ -191,11 +210,18 @@ app.put('/api/admin/titles/:id', requireAdmin, async (req, res) => {
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [req.params.id]);
   res.json(row);
-});
+}));
 
-app.delete('/api/admin/titles/:id', requireAdmin, async (req, res) => {
+app.delete('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
   await db.run('DELETE FROM titles WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
+}));
+
+// Final error handler — anything passed to next(err) via `ah()` lands here
+// instead of crashing the process.
+app.use((err, req, res, next) => {
+  console.error('Request error:', err);
+  res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
 app.listen(PORT, () => {
