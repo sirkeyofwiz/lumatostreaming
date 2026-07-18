@@ -1,0 +1,6 @@
+node_modules/
+reelhouse.db
+reelhouse.db-shm
+reelhouse.db-wal
+server.log
+.env

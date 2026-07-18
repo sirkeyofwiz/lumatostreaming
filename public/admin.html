@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reelhouse — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body class="admin-body">
+
+<div class="admin-wrap">
+  <div class="admin-topbar">
+    <div class="logo">
+      <div class="logo-mark"></div>
+      <div class="logo-text">REELHOUSE</div>
+      <span class="tag" style="color:#241706;background:var(--gold); margin-left:8px;">ADMIN</span>
+    </div>
+    <div class="admin-topbar-actions">
+      <a href="/" class="btn btn-outline">Back to site</a>
+      <div id="admin-user"></div>
+    </div>
+  </div>
+
+  <div id="admin-gate" class="empty-state" hidden>Checking access…</div>
+
+  <div id="admin-content" hidden>
+    <div class="admin-head">
+      <h1>Catalog</h1>
+      <div class="btn btn-gold" id="add-title-btn">Add title</div>
+    </div>
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Title</th><th>Type</th><th>Year</th><th>Genre</th><th>Rating</th><th>Premium</th><th>Featured</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="admin-rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast" class="toast"></div>
+
+<script src="admin.js"></script>
+</body>
+</html>

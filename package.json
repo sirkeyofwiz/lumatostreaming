@@ -1,0 +1,19 @@
+{
+  "name": "reelhouse",
+  "version": "1.0.0",
+  "description": "Full-stack movie/TV catalog browser (Express + SQLite)",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "seed": "node server/seed.js",
+    "dev": "node --watch server/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^11.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "express-session": "^1.19.0",
+    "pg": "^8.22.0"
+  }
+}

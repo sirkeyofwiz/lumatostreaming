@@ -1,0 +1,28 @@
+databases:
+  - name: reelhouse-db
+    plan: free
+    databaseName: reelhouse
+    user: reelhouse
+
+services:
+  - type: web
+    name: reelhouse
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    # Runs once, after the very first successful deploy only — never on
+    # redeploys — so it's safe that seed.js wipes and repopulates the
+    # titles/users tables. This creates the catalog and the admin login.
+    initialDeployHook: npm run seed
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: reelhouse-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: SEED_ADMIN_PASSWORD
+        sync: false   # Render prompts you for this value when you deploy the Blueprint
+      - key: NODE_ENV
+        value: production
