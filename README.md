@@ -1,4 +1,4 @@
-# Lumatostreaming
+# LumatoStreaming
 
 A small full-stack movie/TV catalog browser: Node/Express API, a swappable SQLite/Postgres database, user accounts with per-user watchlists, and an admin panel for managing the catalog. All titles, cast, and descriptions are original/fictional — this is a UI and architecture demo, not a real streaming service (there's no video playback).
 
@@ -16,7 +16,7 @@ A small full-stack movie/TV catalog browser: Node/Express API, a swappable SQLit
 
 ```bash
 npm install
-npm run seed     # creates reelhouse.db, seeds the catalog, creates an admin user
+npm run seed     # creates lumatostreaming.db, seeds the catalog, creates an admin user
 npm start        # http://localhost:3000
 ```
 
@@ -29,7 +29,7 @@ npm run dev
 
 ## Project structure
 ```
-reelhouse-app/
+lumatostreaming/
 ├── server/
 │   ├── db/
 │   │   ├── index.js   # picks SQLite or Postgres based on DATABASE_URL
@@ -43,7 +43,7 @@ reelhouse-app/
 │   └── admin.html / admin.css / admin.js     # admin panel
 ├── package.json
 ├── render.yaml         # Render Blueprint — one-click web service + Postgres
-└── reelhouse.db      # created after `npm run seed` (SQLite mode only)
+└── lumatostreaming.db      # created after `npm run seed` (SQLite mode only)
 ```
 
 ## Accounts & permissions
@@ -78,7 +78,7 @@ This repo includes a `render.yaml` Blueprint that provisions the web service *an
 1. Push this repo to GitHub (if you haven't already).
 2. Go to [render.com/deploy](https://render.com/deploy) and paste your repo URL — or, once it's pushed, use a link of the form:
    `https://render.com/deploy?repo=https://github.com/<you>/<repo>`
-3. Render reads `render.yaml` and shows you a preview of what it'll create: the `reelhouse` web service and the `reelhouse-db` database.
+3. Render reads `render.yaml` and shows you a preview of what it'll create: the `lumatostreaming` web service and the `lumatostreaming-db` database.
 4. You'll be prompted for one value — `SEED_ADMIN_PASSWORD` — since that's marked `sync: false` in the Blueprint for security (it's not hardcoded anywhere). Choose your own admin password here.
 5. Click **Deploy Blueprint**. Render builds the service, provisions the database, and — on this first deploy only — runs `npm run seed` automatically via `initialDeployHook`. Nothing wipes or reseeds on future deploys.
 6. When it's done, open the web service's URL and sign in with `admin` / the password you chose.
