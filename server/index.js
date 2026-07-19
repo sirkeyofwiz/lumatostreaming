@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const path = require('path');
 const db = require('./db');
+const tmdb = require('./tmdb');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -179,6 +180,31 @@ app.delete('/api/watchlist/:titleId', requireAuth, ah(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---------- TMDB import (admin only — fetches real data to prefill the add-title form) ----------
+
+app.get('/api/admin/tmdb/search', requireAdmin, ah(async (req, res) => {
+  const { q, type } = req.query;
+  if (!q) return res.json([]);
+  try {
+    const results = await tmdb.search(q, type === 'series' ? 'series' : 'movie');
+    res.json(results);
+  } catch (err) {
+    if (err.code === 'NO_TMDB_KEY') return res.status(501).json({ error: err.message });
+    res.status(502).json({ error: 'Could not reach TMDB. Try again in a moment.' });
+  }
+}));
+
+app.get('/api/admin/tmdb/:type/:id', requireAdmin, ah(async (req, res) => {
+  const type = req.params.type === 'series' ? 'series' : 'movie';
+  try {
+    const data = await tmdb.details(req.params.id, type);
+    res.json(data);
+  } catch (err) {
+    if (err.code === 'NO_TMDB_KEY') return res.status(501).json({ error: err.message });
+    res.status(502).json({ error: 'Could not reach TMDB. Try again in a moment.' });
+  }
+}));
+
 // ---------- Admin catalog management ----------
 
 app.get('/api/admin/titles', requireAdmin, ah(async (req, res) => {
@@ -192,10 +218,11 @@ app.post('/api/admin/titles', requireAdmin, ah(async (req, res) => {
     return res.status(400).json({ error: 'title, type, year, genre, and rating are required.' });
   }
   const result = await db.run(
-    `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, "cast", director, palette, featured)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, "cast", director, palette, featured, poster_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [t.title, t.type, t.year, t.genre, t.runtime || null, t.seasons || null, t.rating,
-     t.premium ? 1 : 0, t.description || '', t.cast || '', t.director || '', t.palette || 0, t.featured ? 1 : 0]
+     t.premium ? 1 : 0, t.description || '', t.cast || '', t.director || '', t.palette || 0, t.featured ? 1 : 0,
+     t.posterUrl || t.poster_url || null]
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [result.lastID]);
   res.status(201).json(row);
@@ -207,13 +234,14 @@ app.put('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Title not found.' });
 
   await db.run(
-    `UPDATE titles SET title=?, type=?, year=?, genre=?, runtime=?, seasons=?, rating=?, premium=?, description=?, "cast"=?, director=?, palette=?, featured=?
+    `UPDATE titles SET title=?, type=?, year=?, genre=?, runtime=?, seasons=?, rating=?, premium=?, description=?, "cast"=?, director=?, palette=?, featured=?, poster_url=?
      WHERE id=?`,
     [t.title ?? existing.title, t.type ?? existing.type, t.year ?? existing.year, t.genre ?? existing.genre,
      t.runtime ?? existing.runtime, t.seasons ?? existing.seasons, t.rating ?? existing.rating,
      t.premium !== undefined ? (t.premium ? 1 : 0) : existing.premium,
      t.description ?? existing.description, t.cast ?? existing.cast, t.director ?? existing.director,
      t.palette ?? existing.palette, t.featured !== undefined ? (t.featured ? 1 : 0) : existing.featured,
+     (t.posterUrl ?? t.poster_url) ?? existing.poster_url,
      req.params.id]
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [req.params.id]);
