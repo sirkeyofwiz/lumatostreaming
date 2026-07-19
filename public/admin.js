@@ -200,16 +200,20 @@ function openTmdbSearch() {
       <div class="modal" style="max-width:560px;">
         <div class="modal-body">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <h2 style="font-family:'Bebas Neue', sans-serif; font-size:24px; font-weight:400; letter-spacing:.5px;">Import from TMDB</h2>
+            <h2 style="font-family:'Bebas Neue', sans-serif; font-size:24px; font-weight:400; letter-spacing:.5px;">Import a title</h2>
             <div class="modal-close" id="tmdb-close" style="position:static; background:var(--surface-2); color:var(--text);">${closeIcon()}</div>
           </div>
           <div class="auth-tabs">
-            <div class="auth-tab active" data-type="movie">Movies</div>
-            <div class="auth-tab" data-type="series">TV Shows</div>
+            <div class="auth-tab active" data-source="tmdb-movie">Movies</div>
+            <div class="auth-tab" data-source="tmdb-series">TV Shows</div>
+            <div class="auth-tab" data-source="anilist">Anime (AniList)</div>
           </div>
           <input id="tmdb-query" placeholder="Search by title..." style="width:100%; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; color:var(--text); font-size:14px; margin-bottom:14px;" />
           <div id="tmdb-results" style="display:flex; flex-direction:column; gap:8px; max-height:50vh; overflow-y:auto;"></div>
           <div class="auth-error" id="tmdb-error"></div>
+          <p style="margin-top:14px; font-size:11px; color:var(--text-dim);">
+            Movie/TV data from <a href="https://www.themoviedb.org" target="_blank" style="color:var(--text-dim);">TMDB</a>. Anime data from <a href="https://anilist.co" target="_blank" style="color:var(--text-dim);">AniList</a>.
+          </p>
         </div>
       </div>
     </div>
@@ -219,12 +223,13 @@ function openTmdbSearch() {
   });
   document.getElementById('tmdb-close').onclick = () => root.innerHTML = '';
 
-  let activeType = 'movie';
+  let activeSource = 'tmdb-movie';
   root.querySelectorAll('.auth-tab').forEach(tab => {
     tab.onclick = () => {
       root.querySelectorAll('.auth-tab').forEach(x => x.classList.remove('active'));
       tab.classList.add('active');
-      activeType = tab.dataset.type;
+      activeSource = tab.dataset.source;
+      document.getElementById('tmdb-results').innerHTML = '';
       runSearch();
     };
   });
@@ -239,13 +244,16 @@ function openTmdbSearch() {
     if (!q) { resultsEl.innerHTML = ''; return; }
     resultsEl.innerHTML = `<div class="empty-state" style="padding:16px 0;">Searching...</div>`;
     try {
-      const results = await api(`/admin/tmdb/search?q=${encodeURIComponent(q)}&type=${activeType}`);
+      const results = activeSource === 'anilist'
+        ? await api(`/admin/anilist/search?q=${encodeURIComponent(q)}`)
+        : await api(`/admin/tmdb/search?q=${encodeURIComponent(q)}&type=${activeSource === 'tmdb-series' ? 'series' : 'movie'}`);
+      const idKey = activeSource === 'anilist' ? 'anilistId' : 'tmdbId';
       if (!results.length) {
         resultsEl.innerHTML = `<div class="empty-state" style="padding:16px 0;">No results.</div>`;
         return;
       }
       resultsEl.innerHTML = results.map(r => `
-        <div class="tmdb-result" data-id="${r.tmdbId}" style="display:flex; gap:12px; padding:8px; border-radius:8px; cursor:pointer; align-items:center;">
+        <div class="tmdb-result" data-id="${r[idKey]}" style="display:flex; gap:12px; padding:8px; border-radius:8px; cursor:pointer; align-items:center;">
           ${r.posterUrl ? `<img src="${r.posterUrl}" style="width:40px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;" />` : `<div style="width:40px; height:60px; background:var(--surface-2); border-radius:4px; flex-shrink:0;"></div>`}
           <div style="min-width:0;">
             <div style="font-weight:600; font-size:13.5px;">${r.title}${r.year ? ` (${r.year})` : ''}</div>
@@ -264,10 +272,12 @@ function openTmdbSearch() {
     }
   }
 
-  async function importTitle(tmdbId) {
+  async function importTitle(id) {
     errEl.textContent = '';
     try {
-      const data = await api(`/admin/tmdb/${activeType}/${tmdbId}`);
+      const data = activeSource === 'anilist'
+        ? await api(`/admin/anilist/${id}`)
+        : await api(`/admin/tmdb/${activeSource === 'tmdb-series' ? 'series' : 'movie'}/${id}`);
       openForm(null, data);
     } catch (err) {
       errEl.textContent = err.message;
