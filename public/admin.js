@@ -22,7 +22,7 @@ function closeIcon() {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
 }
 
-const GENRES = ['Action', 'Adventure', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller'];
+const GENRES = ['Action', 'Adventure', 'C-Drama', 'Comedy', 'Crime', 'Documentary', 'Donghua/Anime', 'Drama', 'Fantasy', 'Horror', 'K-Drama', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller'];
 
 let titles = [];
 
