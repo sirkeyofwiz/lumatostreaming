@@ -346,20 +346,32 @@ async function render() {
   if (state.route === 'home') {
     filterBar.hidden = true;
     if (!heroSlot.innerHTML) renderHero();
-    const [movies, series] = await Promise.all([
+    if (!state.genres.length) state.genres = await api('/genres');
+
+    const [movies, series, newReleases, ...genreResults] = await Promise.all([
       api('/titles?type=movie&sort=rating'),
       api('/titles?type=series&sort=rating'),
+      api('/titles?sort=year'),
+      ...state.genres.map(g => api(`/titles?genre=${encodeURIComponent(g)}&sort=rating`)),
     ]);
-    content.innerHTML = `
+
+    const genreSections = state.genres
+      .map((g, i) => ({ title: g, items: genreResults[i].slice(0, 14) }))
+      .filter(s => s.items.length > 0);
+
+    const section = (title, items) => items.length ? `
       <div class="section">
-        <div class="section-head"><div class="section-title">Popular movies</div></div>
-        <div class="row">${movies.map(posterCard).join('')}</div>
+        <div class="section-head"><div class="section-title">${title}</div></div>
+        <div class="row">${items.map(posterCard).join('')}</div>
       </div>
-      <div class="section">
-        <div class="section-head"><div class="section-title">Popular series</div></div>
-        <div class="row">${series.map(posterCard).join('')}</div>
-      </div>
-    `;
+    ` : '';
+
+    content.innerHTML = [
+      section('Popular movies', movies),
+      section('Popular series', series),
+      section('New releases', newReleases.slice(0, 14)),
+      ...genreSections.map(s => section(s.title, s.items)),
+    ].join('');
     attachCardHandlers(content);
     return;
   }
