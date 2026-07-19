@@ -5,6 +5,7 @@ const cors = require('cors');
 const path = require('path');
 const db = require('./db');
 const tmdb = require('./tmdb');
+const anilist = require('./anilist');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -202,6 +203,24 @@ app.get('/api/admin/tmdb/:type/:id', requireAdmin, ah(async (req, res) => {
   } catch (err) {
     if (err.code === 'NO_TMDB_KEY') return res.status(501).json({ error: err.message });
     res.status(502).json({ error: 'Could not reach TMDB. Try again in a moment.' });
+  }
+}));
+
+app.get('/api/admin/anilist/search', requireAdmin, ah(async (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.json([]);
+  try {
+    res.json(await anilist.search(q));
+  } catch (err) {
+    res.status(502).json({ error: 'Could not reach AniList. Try again in a moment.' });
+  }
+}));
+
+app.get('/api/admin/anilist/:id', requireAdmin, ah(async (req, res) => {
+  try {
+    res.json(await anilist.details(req.params.id));
+  } catch (err) {
+    res.status(502).json({ error: 'Could not reach AniList. Try again in a moment.' });
   }
 }));
 
