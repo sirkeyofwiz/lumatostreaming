@@ -21,6 +21,14 @@ process.on('uncaughtException', (err) => {
 });
 
 app.use(cors({ origin: true, credentials: true }));
+
+// Railway/Render/most hosts terminate HTTPS at a proxy and forward plain
+// HTTP to the app. Without this, Express can't tell the original request
+// was HTTPS, and since our session cookie is `secure: true` in production,
+// it would silently refuse to set the cookie at all — logins would appear
+// to work but never actually persist.
+app.set('trust proxy', 1);
+
 app.use(express.json());
 app.use(session({
   secret: process.env.SESSION_SECRET || 'lumatostreaming-dev-secret-change-me',
