@@ -144,7 +144,7 @@ app.get('/api/titles', ah(async (req, res) => {
 }));
 
 app.get('/api/titles/featured', ah(async (req, res) => {
-  const rows = await db.all('SELECT * FROM titles WHERE featured = 1');
+  const rows = await db.all('SELECT * FROM titles WHERE featured');
   res.json(await withWatchlistFlag(rows, req.session.user && req.session.user.id));
 }));
 
