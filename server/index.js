@@ -184,7 +184,7 @@ app.post('/api/admin/titles', requireAdmin, ah(async (req, res) => {
     return res.status(400).json({ error: 'title, type, year, genre, and rating are required.' });
   }
   const result = await db.run(
-    `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, cast, director, palette, featured)
+    `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, "cast", director, palette, featured)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [t.title, t.type, t.year, t.genre, t.runtime || null, t.seasons || null, t.rating,
      t.premium ? 1 : 0, t.description || '', t.cast || '', t.director || '', t.palette || 0, t.featured ? 1 : 0]
@@ -199,7 +199,7 @@ app.put('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Title not found.' });
 
   await db.run(
-    `UPDATE titles SET title=?, type=?, year=?, genre=?, runtime=?, seasons=?, rating=?, premium=?, description=?, cast=?, director=?, palette=?, featured=?
+    `UPDATE titles SET title=?, type=?, year=?, genre=?, runtime=?, seasons=?, rating=?, premium=?, description=?, "cast"=?, director=?, palette=?, featured=?
      WHERE id=?`,
     [t.title ?? existing.title, t.type ?? existing.type, t.year ?? existing.year, t.genre ?? existing.genre,
      t.runtime ?? existing.runtime, t.seasons ?? existing.seasons, t.rating ?? existing.rating,
