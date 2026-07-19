@@ -21,7 +21,8 @@ const sqliteSchema = `
     "cast" TEXT NOT NULL,
     director TEXT NOT NULL,
     palette INTEGER NOT NULL DEFAULT 0,
-    featured INTEGER NOT NULL DEFAULT 0
+    featured INTEGER NOT NULL DEFAULT 0,
+    poster_url TEXT
   );
 
   CREATE TABLE IF NOT EXISTS watchlist (
@@ -56,7 +57,8 @@ const pgSchema = `
     "cast" TEXT NOT NULL,
     director TEXT NOT NULL,
     palette INTEGER NOT NULL DEFAULT 0,
-    featured BOOLEAN NOT NULL DEFAULT FALSE
+    featured BOOLEAN NOT NULL DEFAULT FALSE,
+    poster_url TEXT
   );
 
   CREATE TABLE IF NOT EXISTS watchlist (
@@ -70,6 +72,23 @@ const pgSchema = `
 
 async function ensureSchema(db) {
   await db.exec(db.kind === 'postgres' ? pgSchema : sqliteSchema);
+  await migrate(db);
+}
+
+// Handles columns added after a database was first created — CREATE TABLE
+// IF NOT EXISTS above only helps on brand new databases. Existing ones
+// (like a live production DB) need an explicit ALTER TABLE, run only if
+// the column isn't already there.
+async function migrate(db) {
+  if (db.kind === 'postgres') {
+    await db.exec(`ALTER TABLE titles ADD COLUMN IF NOT EXISTS poster_url TEXT`);
+  } else {
+    const cols = await db.all(`PRAGMA table_info(titles)`);
+    const hasPosterUrl = cols.some(c => c.name === 'poster_url');
+    if (!hasPosterUrl) {
+      await db.exec(`ALTER TABLE titles ADD COLUMN poster_url TEXT`);
+    }
+  }
 }
 
 module.exports = { ensureSchema };
