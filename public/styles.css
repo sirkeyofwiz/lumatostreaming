@@ -38,6 +38,7 @@ body{
 .logo-text{font-family:'Bebas Neue', sans-serif; font-size:17px; letter-spacing:1px; white-space:nowrap;}
 nav{display:flex; flex-direction:column; gap:2px;}
 .nav-item{display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:8px; color:var(--text-dim); font-size:14px; font-weight:500; cursor:pointer; transition:background .15s, color .15s; white-space:nowrap;}
+a.nav-item{text-decoration:none; cursor:pointer;}
 .nav-item:hover{background:var(--surface); color:var(--text);}
 .nav-item.active{background:var(--teal-dim); color:var(--teal);}
 .nav-item svg{width:18px; height:18px; flex-shrink:0;}
