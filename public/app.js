@@ -10,6 +10,10 @@ function gradient(seed) {
   const angle = 120 + (seed * 17) % 90;
   return `linear-gradient(${angle}deg, ${a}, ${b})`;
 }
+function posterBackground(item) {
+  if (item.poster_url) return `url('${item.poster_url}') center/cover no-repeat, ${gradient(item.palette)}`;
+  return gradient(item.palette);
+}
 function starIcon() {
   return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/></svg>`;
 }
@@ -186,7 +190,7 @@ function posterCard(item) {
     : `${item.year} · ${item.genre}`;
   return `
     <div class="card" data-id="${item.id}">
-      <div class="poster" style="background:${gradient(item.palette)}">
+      <div class="poster" style="background:${posterBackground(item)}">
         ${badge}
         <div class="rating">${starIcon()}${item.rating.toFixed(1)}</div>
         <div class="watch-toggle ${item.in_watchlist ? 'on' : ''}" data-watch-id="${item.id}">
@@ -226,7 +230,7 @@ async function openDetail(id) {
   root.innerHTML = `
     <div class="modal-backdrop">
       <div class="modal">
-        <div class="modal-hero" style="background:${gradient(item.palette)}">
+        <div class="modal-hero" style="background:${posterBackground(item)}">
           <div class="modal-close" id="modal-close">${closeIcon()}</div>
           <div class="modal-hero-title">${item.title}</div>
         </div>
@@ -269,7 +273,7 @@ async function renderHero() {
   function paint() {
     const item = featured[idx];
     slot.innerHTML = `
-      <div class="hero" style="background:${gradient(item.palette)}">
+      <div class="hero" style="background:${posterBackground(item)}">
         <div class="hero-content">
           <div class="hero-eyebrow">Featured today</div>
           <div class="hero-title">${item.title.toUpperCase()}</div>

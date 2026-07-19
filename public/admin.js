@@ -67,18 +67,20 @@ async function deleteTitle(id) {
   loadTitles();
 }
 
-function openForm(existing) {
+function openForm(existing, prefill) {
   const root = document.getElementById('modal-root');
-  const t = existing || { type: 'movie', premium: 0, featured: 0, palette: 0, rating: 7.5, year: new Date().getFullYear() };
+  const t = existing || prefill || { type: 'movie', premium: 0, featured: 0, palette: 0, rating: 7.5, year: new Date().getFullYear() };
+  const posterUrl = t.poster_url || t.posterUrl || null;
   root.innerHTML = `
     <div class="modal-backdrop">
       <div class="modal" style="max-width:560px;">
         <div class="modal-body">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <h2 style="font-family:'Bebas Neue', sans-serif; font-size:24px; font-weight:400; letter-spacing:.5px;">${existing ? 'Edit title' : 'Add title'}</h2>
+            <h2 style="font-family:'Bebas Neue', sans-serif; font-size:24px; font-weight:400; letter-spacing:.5px;">${existing ? 'Edit title' : prefill ? 'Review imported title' : 'Add title'}</h2>
             <div class="modal-close" id="form-close" style="position:static; background:var(--surface-2); color:var(--text);">${closeIcon()}</div>
           </div>
           <form id="title-form" class="admin-form">
+            ${posterUrl ? `<img src="${posterUrl}" alt="" style="width:100px; border-radius:8px; align-self:flex-start; border:1px solid var(--border);" />` : ''}
             <div>
               <label>Title</label>
               <input name="title" value="${t.title || ''}" required />
@@ -133,9 +135,10 @@ function openForm(existing) {
               </div>
             </div>
             <div>
-              <label>Poster palette (0-7)</label>
+              <label>Poster palette (0-7) — used only if there's no poster image above</label>
               <input name="palette" type="number" min="0" max="7" value="${t.palette ?? 0}" />
             </div>
+            <input type="hidden" name="poster_url" value="${posterUrl || ''}" />
             <div style="display:flex; gap:20px;">
               <label class="admin-checkbox"><input type="checkbox" name="premium" ${t.premium ? 'checked' : ''}/> Premium</label>
               <label class="admin-checkbox"><input type="checkbox" name="featured" ${t.featured ? 'checked' : ''}/> Featured on homepage</label>
@@ -169,6 +172,7 @@ function openForm(existing) {
       cast: fd.get('cast'),
       director: fd.get('director'),
       palette: Number(fd.get('palette')) || 0,
+      poster_url: fd.get('poster_url') || null,
       premium: fd.get('premium') === 'on',
       featured: fd.get('featured') === 'on',
     };
@@ -189,6 +193,93 @@ function openForm(existing) {
   });
 }
 
+function openTmdbSearch() {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal" style="max-width:560px;">
+        <div class="modal-body">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h2 style="font-family:'Bebas Neue', sans-serif; font-size:24px; font-weight:400; letter-spacing:.5px;">Import from TMDB</h2>
+            <div class="modal-close" id="tmdb-close" style="position:static; background:var(--surface-2); color:var(--text);">${closeIcon()}</div>
+          </div>
+          <div class="auth-tabs">
+            <div class="auth-tab active" data-type="movie">Movies</div>
+            <div class="auth-tab" data-type="series">TV Shows</div>
+          </div>
+          <input id="tmdb-query" placeholder="Search by title..." style="width:100%; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; color:var(--text); font-size:14px; margin-bottom:14px;" />
+          <div id="tmdb-results" style="display:flex; flex-direction:column; gap:8px; max-height:50vh; overflow-y:auto;"></div>
+          <div class="auth-error" id="tmdb-error"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
+  });
+  document.getElementById('tmdb-close').onclick = () => root.innerHTML = '';
+
+  let activeType = 'movie';
+  root.querySelectorAll('.auth-tab').forEach(tab => {
+    tab.onclick = () => {
+      root.querySelectorAll('.auth-tab').forEach(x => x.classList.remove('active'));
+      tab.classList.add('active');
+      activeType = tab.dataset.type;
+      runSearch();
+    };
+  });
+
+  const resultsEl = document.getElementById('tmdb-results');
+  const errEl = document.getElementById('tmdb-error');
+  let searchTimer;
+
+  async function runSearch() {
+    const q = document.getElementById('tmdb-query').value.trim();
+    errEl.textContent = '';
+    if (!q) { resultsEl.innerHTML = ''; return; }
+    resultsEl.innerHTML = `<div class="empty-state" style="padding:16px 0;">Searching...</div>`;
+    try {
+      const results = await api(`/admin/tmdb/search?q=${encodeURIComponent(q)}&type=${activeType}`);
+      if (!results.length) {
+        resultsEl.innerHTML = `<div class="empty-state" style="padding:16px 0;">No results.</div>`;
+        return;
+      }
+      resultsEl.innerHTML = results.map(r => `
+        <div class="tmdb-result" data-id="${r.tmdbId}" style="display:flex; gap:12px; padding:8px; border-radius:8px; cursor:pointer; align-items:center;">
+          ${r.posterUrl ? `<img src="${r.posterUrl}" style="width:40px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;" />` : `<div style="width:40px; height:60px; background:var(--surface-2); border-radius:4px; flex-shrink:0;"></div>`}
+          <div style="min-width:0;">
+            <div style="font-weight:600; font-size:13.5px;">${r.title}${r.year ? ` (${r.year})` : ''}</div>
+            <div style="font-size:12px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.overview || ''}</div>
+          </div>
+        </div>
+      `).join('');
+      resultsEl.querySelectorAll('.tmdb-result').forEach(el => {
+        el.addEventListener('mouseenter', () => el.style.background = 'var(--surface)');
+        el.addEventListener('mouseleave', () => el.style.background = 'transparent');
+        el.addEventListener('click', () => importTitle(el.dataset.id));
+      });
+    } catch (err) {
+      resultsEl.innerHTML = '';
+      errEl.textContent = err.message;
+    }
+  }
+
+  async function importTitle(tmdbId) {
+    errEl.textContent = '';
+    try {
+      const data = await api(`/admin/tmdb/${activeType}/${tmdbId}`);
+      openForm(null, data);
+    } catch (err) {
+      errEl.textContent = err.message;
+    }
+  }
+
+  document.getElementById('tmdb-query').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 350);
+  });
+}
+
 async function init() {
   const gate = document.getElementById('admin-gate');
   gate.hidden = false;
@@ -206,6 +297,7 @@ async function init() {
   document.getElementById('admin-content').hidden = false;
   document.getElementById('admin-user').innerHTML = `<span style="font-size:13px; color:var(--text-dim);">Signed in as <strong style="color:var(--text);">${user.username}</strong></span>`;
   document.getElementById('add-title-btn').onclick = () => openForm(null);
+  document.getElementById('import-tmdb-btn').onclick = () => openTmdbSearch();
   await loadTitles();
 }
 
