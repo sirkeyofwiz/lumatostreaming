@@ -51,6 +51,18 @@ lumatostreaming/
 - Admins (`is_admin = true` in the `users` table) get access to `/admin.html` and the `/api/admin/*` routes for creating, editing, and deleting titles.
 - Sessions are cookie-based (`express-session`). The bundled `MemoryStore` is fine for local use but **resets on restart and leaks memory** — for a real deploy, swap in a persistent store (e.g. `connect-pg-simple` if you're already on Postgres).
 
+## Importing real titles from TMDB
+
+The admin panel has an **Import from TMDB** button that searches [The Movie Database](https://www.themoviedb.org) and pre-fills the add-title form with real data — poster, description, cast, rating — for you to review and edit before saving. The catalog itself is still your own database; TMDB is only used as a data source at import time, not a live dependency for browsing the site.
+
+To enable it, set an environment variable:
+```
+TMDB_API_KEY=<your v3 API key>
+```
+Get a free key at themoviedb.org → account Settings → API → Create (choose "Developer"). Without this variable set, the import button will show an error but the rest of the site works normally.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB — attribution is shown in the admin panel and site sidebar per their terms.
+
 ## API
 
 | Method | Route                       | Auth       | Description |
@@ -66,6 +78,8 @@ lumatostreaming/
 | GET    | `/api/watchlist`                  | signed in | Current user's watchlist |
 | POST   | `/api/watchlist`                  | signed in | `{ titleId }` |
 | DELETE | `/api/watchlist/:titleId`          | signed in | |
+| GET    | `/api/admin/tmdb/search`            | admin     | Query params: `q`, `type` (movie/series) |
+| GET    | `/api/admin/tmdb/:type/:id`         | admin     | Full detail lookup by TMDB id, for prefilling the form |
 | GET    | `/api/admin/titles`                 | admin     | Full catalog, unfiltered |
 | POST   | `/api/admin/titles`                 | admin     | Create a title |
 | PUT    | `/api/admin/titles/:id`             | admin     | Update a title |
