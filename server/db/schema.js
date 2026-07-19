@@ -18,7 +18,7 @@ const sqliteSchema = `
     rating REAL NOT NULL,
     premium INTEGER NOT NULL DEFAULT 0,
     description TEXT NOT NULL,
-    cast TEXT NOT NULL,
+    "cast" TEXT NOT NULL,
     director TEXT NOT NULL,
     palette INTEGER NOT NULL DEFAULT 0,
     featured INTEGER NOT NULL DEFAULT 0
@@ -53,7 +53,7 @@ const pgSchema = `
     rating REAL NOT NULL,
     premium BOOLEAN NOT NULL DEFAULT FALSE,
     description TEXT NOT NULL,
-    cast TEXT NOT NULL,
+    "cast" TEXT NOT NULL,
     director TEXT NOT NULL,
     palette INTEGER NOT NULL DEFAULT 0,
     featured BOOLEAN NOT NULL DEFAULT FALSE
