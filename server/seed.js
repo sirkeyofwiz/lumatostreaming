@@ -86,7 +86,7 @@ async function run() {
 
   for (const t of titles) {
     await db.run(
-      `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, cast, director, palette, featured)
+      `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, "cast", director, palette, featured)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [t.title, t.type, t.year, t.genre, t.runtime, t.seasons, t.rating, t.premium, t.description, t.cast, t.director, t.palette, t.featured]
     );
