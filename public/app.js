@@ -90,7 +90,13 @@ function renderSidebarAdminLink() {
       link.id = 'admin-nav-item';
       link.href = '/admin.html';
       link.className = 'nav-item';
+      link.style.cursor = 'pointer';
+      link.style.textDecoration = 'none';
       link.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v4H4zM4 10h10v4H4zM4 16h16v4H4z"/></svg>Admin panel`;
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.location.href = '/admin.html';
+      });
       document.querySelector('.nav-divider').after(link);
     }
   } else if (link) {
