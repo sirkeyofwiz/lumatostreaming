@@ -237,11 +237,11 @@ app.post('/api/admin/titles', requireAdmin, ah(async (req, res) => {
     return res.status(400).json({ error: 'title, type, year, genre, and rating are required.' });
   }
   const result = await db.run(
-    `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, "cast", director, palette, featured, poster_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, "cast", director, palette, featured, poster_url, backdrop_url, video_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [t.title, t.type, t.year, t.genre, t.runtime || null, t.seasons || null, t.rating,
      t.premium ? 1 : 0, t.description || '', t.cast || '', t.director || '', t.palette || 0, t.featured ? 1 : 0,
-     t.posterUrl || t.poster_url || null]
+     t.posterUrl || t.poster_url || null, t.backdropUrl || t.backdrop_url || null, t.video_url || null]
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [result.lastID]);
   res.status(201).json(row);
@@ -253,7 +253,7 @@ app.put('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Title not found.' });
 
   await db.run(
-    `UPDATE titles SET title=?, type=?, year=?, genre=?, runtime=?, seasons=?, rating=?, premium=?, description=?, "cast"=?, director=?, palette=?, featured=?, poster_url=?
+    `UPDATE titles SET title=?, type=?, year=?, genre=?, runtime=?, seasons=?, rating=?, premium=?, description=?, "cast"=?, director=?, palette=?, featured=?, poster_url=?, backdrop_url=?, video_url=?
      WHERE id=?`,
     [t.title ?? existing.title, t.type ?? existing.type, t.year ?? existing.year, t.genre ?? existing.genre,
      t.runtime ?? existing.runtime, t.seasons ?? existing.seasons, t.rating ?? existing.rating,
@@ -261,6 +261,8 @@ app.put('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
      t.description ?? existing.description, t.cast ?? existing.cast, t.director ?? existing.director,
      t.palette ?? existing.palette, t.featured !== undefined ? (t.featured ? 1 : 0) : existing.featured,
      (t.posterUrl ?? t.poster_url) ?? existing.poster_url,
+     (t.backdropUrl ?? t.backdrop_url) ?? existing.backdrop_url,
+     (t.video_url) ?? existing.video_url,
      req.params.id]
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [req.params.id]);
