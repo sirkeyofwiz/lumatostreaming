@@ -71,6 +71,7 @@ function openForm(existing, prefill) {
   const root = document.getElementById('modal-root');
   const t = existing || prefill || { type: 'movie', premium: 0, featured: 0, palette: 0, rating: 7.5, year: new Date().getFullYear() };
   const posterUrl = t.poster_url || t.posterUrl || null;
+  const backdropUrl = t.backdrop_url || t.backdropUrl || null;
   root.innerHTML = `
     <div class="modal-backdrop">
       <div class="modal" style="max-width:560px;">
@@ -139,6 +140,14 @@ function openForm(existing, prefill) {
               <input name="palette" type="number" min="0" max="7" value="${t.palette ?? 0}" />
             </div>
             <input type="hidden" name="poster_url" value="${posterUrl || ''}" />
+            <div>
+              <label>Backdrop image URL (used for the homepage hero — wide image, different from the poster above)</label>
+              <input name="backdrop_url" value="${backdropUrl || ''}" placeholder="https://..." />
+            </div>
+            <div>
+              <label>Video URL — YouTube/Vimeo link, or a direct link to a video file you host</label>
+              <input name="video_url" value="${t.video_url || ''}" placeholder="https://youtube.com/watch?v=... or https://.../file.mp4" />
+            </div>
             <div style="display:flex; gap:20px;">
               <label class="admin-checkbox"><input type="checkbox" name="premium" ${t.premium ? 'checked' : ''}/> Premium</label>
               <label class="admin-checkbox"><input type="checkbox" name="featured" ${t.featured ? 'checked' : ''}/> Featured on homepage</label>
@@ -173,6 +182,8 @@ function openForm(existing, prefill) {
       director: fd.get('director'),
       palette: Number(fd.get('palette')) || 0,
       poster_url: fd.get('poster_url') || null,
+      backdrop_url: fd.get('backdrop_url') || null,
+      video_url: fd.get('video_url') || null,
       premium: fd.get('premium') === 'on',
       featured: fd.get('featured') === 'on',
     };
