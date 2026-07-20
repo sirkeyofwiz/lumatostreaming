@@ -22,7 +22,9 @@ const sqliteSchema = `
     director TEXT NOT NULL,
     palette INTEGER NOT NULL DEFAULT 0,
     featured INTEGER NOT NULL DEFAULT 0,
-    poster_url TEXT
+    poster_url TEXT,
+    backdrop_url TEXT,
+    video_url TEXT
   );
 
   CREATE TABLE IF NOT EXISTS watchlist (
@@ -58,7 +60,9 @@ const pgSchema = `
     director TEXT NOT NULL,
     palette INTEGER NOT NULL DEFAULT 0,
     featured BOOLEAN NOT NULL DEFAULT FALSE,
-    poster_url TEXT
+    poster_url TEXT,
+    backdrop_url TEXT,
+    video_url TEXT
   );
 
   CREATE TABLE IF NOT EXISTS watchlist (
@@ -82,11 +86,19 @@ async function ensureSchema(db) {
 async function migrate(db) {
   if (db.kind === 'postgres') {
     await db.exec(`ALTER TABLE titles ADD COLUMN IF NOT EXISTS poster_url TEXT`);
+    await db.exec(`ALTER TABLE titles ADD COLUMN IF NOT EXISTS backdrop_url TEXT`);
+    await db.exec(`ALTER TABLE titles ADD COLUMN IF NOT EXISTS video_url TEXT`);
   } else {
     const cols = await db.all(`PRAGMA table_info(titles)`);
-    const hasPosterUrl = cols.some(c => c.name === 'poster_url');
-    if (!hasPosterUrl) {
+    const names = cols.map(c => c.name);
+    if (!names.includes('poster_url')) {
       await db.exec(`ALTER TABLE titles ADD COLUMN poster_url TEXT`);
+    }
+    if (!names.includes('backdrop_url')) {
+      await db.exec(`ALTER TABLE titles ADD COLUMN backdrop_url TEXT`);
+    }
+    if (!names.includes('video_url')) {
+      await db.exec(`ALTER TABLE titles ADD COLUMN video_url TEXT`);
     }
   }
 }
