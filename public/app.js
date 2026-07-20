@@ -14,6 +14,15 @@ function posterBackground(item) {
   if (item.poster_url) return `url('${item.poster_url}') center/cover no-repeat, ${gradient(item.palette)}`;
   return gradient(item.palette);
 }
+function heroBackground(item) {
+  // The hero banner and modal header are wide/landscape, but movie posters
+  // are tall/portrait — `cover` on a mismatched aspect ratio crops almost
+  // the whole image away and blows up whatever's left (e.g. one giant,
+  // zoomed-in face). `contain` shows the whole poster with no cropping;
+  // anchoring it to the right keeps it clear of the left-aligned title text.
+  if (item.poster_url) return `url('${item.poster_url}') right center/contain no-repeat, ${gradient(item.palette)}`;
+  return gradient(item.palette);
+}
 function starIcon() {
   return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/></svg>`;
 }
@@ -230,7 +239,7 @@ async function openDetail(id) {
   root.innerHTML = `
     <div class="modal-backdrop">
       <div class="modal">
-        <div class="modal-hero" style="background:${posterBackground(item)}">
+        <div class="modal-hero" style="background:${heroBackground(item)}">
           <div class="modal-close" id="modal-close">${closeIcon()}</div>
           <div class="modal-hero-title">${item.title}</div>
         </div>
@@ -265,15 +274,18 @@ async function openDetail(id) {
   };
 }
 
+let heroTimer = null;
+
 async function renderHero() {
   const slot = document.getElementById('hero-slot');
+  clearInterval(heroTimer);
   const featured = await api('/titles/featured');
   if (!featured.length) { slot.innerHTML = ''; return; }
   let idx = 0;
   function paint() {
     const item = featured[idx];
     slot.innerHTML = `
-      <div class="hero" style="background:${posterBackground(item)}">
+      <div class="hero" style="background:${heroBackground(item)}">
         <div class="hero-content">
           <div class="hero-eyebrow">Featured today</div>
           <div class="hero-title">${item.title.toUpperCase()}</div>
@@ -290,13 +302,27 @@ async function renderHero() {
       </div>
     `;
     slot.querySelectorAll('.hero-dots span').forEach(dot => {
-      dot.addEventListener('click', () => { idx = Number(dot.dataset.i); paint(); });
+      dot.addEventListener('click', (e) => {
+        e.stopPropagation();
+        idx = Number(dot.dataset.i);
+        paint();
+        resetTimer();
+      });
     });
     slot.querySelector('.hero').addEventListener('click', (e) => {
       if (!e.target.closest('.hero-dots')) openDetail(item.id);
     });
   }
+  function advance() {
+    idx = (idx + 1) % featured.length;
+    paint();
+  }
+  function resetTimer() {
+    clearInterval(heroTimer);
+    if (featured.length > 1) heroTimer = setInterval(advance, 6000);
+  }
   paint();
+  resetTimer();
 }
 
 async function renderFilterBar() {
@@ -318,6 +344,8 @@ async function render() {
   const content = document.getElementById('content');
   const heroSlot = document.getElementById('hero-slot');
   const filterBar = document.getElementById('filter-bar');
+
+  if (state.route !== 'home') clearInterval(heroTimer);
 
   if (state.route === 'watchlist') {
     heroSlot.innerHTML = '';
@@ -345,7 +373,7 @@ async function render() {
 
   if (state.route === 'home') {
     filterBar.hidden = true;
-    if (!heroSlot.innerHTML) renderHero();
+    renderHero();
     if (!state.genres.length) state.genres = await api('/genres');
 
     const [movies, series, newReleases, ...genreResults] = await Promise.all([
