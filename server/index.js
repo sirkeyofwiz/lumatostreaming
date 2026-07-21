@@ -155,6 +155,54 @@ app.get('/api/titles/:id', ah(async (req, res) => {
   res.json(withFlag);
 }));
 
+// Public — anyone viewing a series can see its episode list.
+app.get('/api/titles/:id/episodes', ah(async (req, res) => {
+  const rows = await db.all(
+    'SELECT * FROM episodes WHERE title_id = ? ORDER BY season_number ASC, episode_number ASC',
+    [req.params.id]
+  );
+  res.json(rows);
+}));
+
+// ---------- Episode management (admin only) ----------
+
+app.post('/api/admin/titles/:id/episodes', requireAdmin, ah(async (req, res) => {
+  const t = req.body || {};
+  if (!t.name || !t.episode_number) {
+    return res.status(400).json({ error: 'name and episode_number are required.' });
+  }
+  const title = await db.get('SELECT id FROM titles WHERE id = ?', [req.params.id]);
+  if (!title) return res.status(404).json({ error: 'Title not found.' });
+
+  const result = await db.run(
+    `INSERT INTO episodes (title_id, season_number, episode_number, name, description, video_url)
+     VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+    [req.params.id, t.season_number || 1, t.episode_number, t.name, t.description || null, t.video_url || null]
+  );
+  const row = await db.get('SELECT * FROM episodes WHERE id = ?', [result.lastID]);
+  res.status(201).json(row);
+}));
+
+app.put('/api/admin/episodes/:id', requireAdmin, ah(async (req, res) => {
+  const t = req.body || {};
+  const existing = await db.get('SELECT * FROM episodes WHERE id = ?', [req.params.id]);
+  if (!existing) return res.status(404).json({ error: 'Episode not found.' });
+
+  await db.run(
+    `UPDATE episodes SET season_number=?, episode_number=?, name=?, description=?, video_url=? WHERE id=?`,
+    [t.season_number ?? existing.season_number, t.episode_number ?? existing.episode_number,
+     t.name ?? existing.name, t.description ?? existing.description, t.video_url ?? existing.video_url,
+     req.params.id]
+  );
+  const row = await db.get('SELECT * FROM episodes WHERE id = ?', [req.params.id]);
+  res.json(row);
+}));
+
+app.delete('/api/admin/episodes/:id', requireAdmin, ah(async (req, res) => {
+  await db.run('DELETE FROM episodes WHERE id = ?', [req.params.id]);
+  res.json({ ok: true });
+}));
+
 // ---------- Watchlist (per signed-in user) ----------
 
 app.get('/api/watchlist', requireAuth, ah(async (req, res) => {
