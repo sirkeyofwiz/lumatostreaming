@@ -274,6 +274,27 @@ async function openDetail(id) {
     ? `<span class="tag">${item.seasons} season${item.seasons > 1 ? 's' : ''}</span><span class="tag">${item.genre}</span><span class="tag">${item.year}</span>`
     : `<span class="tag">${item.runtime}</span><span class="tag">${item.genre}</span><span class="tag">${item.year}</span>`;
 
+  const episodes = item.type === 'series' ? await api(`/titles/${id}/episodes`) : [];
+  const seasons = [...new Set(episodes.map(e => e.season_number))];
+
+  const episodesHtml = episodes.length ? `
+    <div class="modal-row" style="margin-top:20px; margin-bottom:8px;"><span class="label">Episodes</span></div>
+    <div class="episode-list">
+      ${seasons.map(s => `
+        <div class="episode-season-label">Season ${s}</div>
+        ${episodes.filter(e => e.season_number === s).map(e => `
+          <div class="episode-row" data-video="${e.video_url || ''}">
+            <div class="episode-play-icon">▶</div>
+            <div style="min-width:0;">
+              <div class="episode-name">S${e.season_number}E${e.episode_number} · ${e.name}</div>
+              ${e.description ? `<div class="episode-desc">${e.description}</div>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      `).join('')}
+    </div>
+  ` : '';
+
   root.innerHTML = `
     <div class="modal-backdrop">
       <div class="modal">
@@ -288,11 +309,12 @@ async function openDetail(id) {
           <div class="modal-row"><span class="label">${item.type === 'series' ? 'Creator' : 'Director'}</span><span>${item.director}</span></div>
           <div class="modal-row"><span class="label">Rating</span><span>${item.rating.toFixed(1)} / 10</span></div>
           <div class="modal-actions">
-            <div class="btn btn-gold" id="modal-play">Play</div>
+            <div class="btn btn-gold" id="modal-play">${episodes.length ? `Play S${episodes[0].season_number}E${episodes[0].episode_number}` : 'Play'}</div>
             <div class="btn btn-outline ${item.in_watchlist ? 'on' : ''}" id="modal-watch">
               ${item.in_watchlist ? 'In watchlist' : 'Add to watchlist'}
             </div>
           </div>
+          ${episodesHtml}
         </div>
       </div>
     </div>
@@ -301,7 +323,15 @@ async function openDetail(id) {
   root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
     if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
   });
-  document.getElementById('modal-play').onclick = () => openPlayer(item);
+  document.getElementById('modal-play').onclick = () => {
+    if (episodes.length) openPlayer({ video_url: episodes[0].video_url, title: `${item.title} — S${episodes[0].season_number}E${episodes[0].episode_number}` });
+    else openPlayer(item);
+  };
+  root.querySelectorAll('.episode-row').forEach(row => {
+    row.addEventListener('click', () => {
+      openPlayer({ video_url: row.dataset.video, title: item.title });
+    });
+  });
   const watchBtn = document.getElementById('modal-watch');
   watchBtn.onclick = async () => {
     if (!state.user) { openAuthModal('login'); return; }

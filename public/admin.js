@@ -37,6 +37,7 @@ function row(t) {
       <td><span class="pill ${t.premium ? 'pill-yes' : 'pill-no'}">${t.premium ? 'Yes' : 'No'}</span></td>
       <td><span class="pill ${t.featured ? 'pill-yes' : 'pill-no'}">${t.featured ? 'Yes' : 'No'}</span></td>
       <td class="row-actions">
+        ${t.type === 'series' ? `<div class="btn btn-outline" data-episodes="${t.id}">Episodes</div>` : ''}
         <div class="btn btn-outline" data-edit="${t.id}">Edit</div>
         <div class="btn btn-outline" data-delete="${t.id}" style="color:var(--red); border-color:var(--red);">Delete</div>
       </td>
@@ -51,6 +52,9 @@ function renderTable() {
   });
   document.querySelectorAll('[data-delete]').forEach(btn => {
     btn.onclick = () => deleteTitle(Number(btn.dataset.delete));
+  });
+  document.querySelectorAll('[data-episodes]').forEach(btn => {
+    btn.onclick = () => openEpisodeManager(titles.find(t => t.id === Number(btn.dataset.episodes)));
   });
 }
 
@@ -299,6 +303,103 @@ function openTmdbSearch() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(runSearch, 350);
   });
+}
+
+async function openEpisodeManager(title) {
+  const root = document.getElementById('modal-root');
+  let episodes = await api(`/titles/${title.id}/episodes`);
+
+  function renderEpisodeList() {
+    const seasons = [...new Set(episodes.map(e => e.season_number))].sort((a, b) => a - b);
+    return episodes.length ? seasons.map(s => `
+      <div style="font-size:11px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:.5px; margin:14px 0 6px;">Season ${s}</div>
+      ${episodes.filter(e => e.season_number === s).sort((a, b) => a.episode_number - b.episode_number).map(e => `
+        <div style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:8px; border:1px solid var(--border); margin-bottom:6px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:600;">E${e.episode_number} · ${e.name}</div>
+            <div style="font-size:11.5px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${e.video_url || 'No video linked'}</div>
+          </div>
+          <div class="btn btn-outline" style="padding:6px 10px; font-size:11.5px;" data-edit-ep="${e.id}">Edit</div>
+          <div class="btn btn-outline" style="padding:6px 10px; font-size:11.5px; color:var(--red); border-color:var(--red);" data-delete-ep="${e.id}">Delete</div>
+        </div>
+      `).join('')}
+    `).join('') : `<div class="empty-state" style="padding:20px 0;">No episodes added yet.</div>`;
+  }
+
+  function paint() {
+    root.innerHTML = `
+      <div class="modal-backdrop">
+        <div class="modal" style="max-width:560px;">
+          <div class="modal-body">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <h2 style="font-family:'Bebas Neue', sans-serif; font-size:24px; font-weight:400; letter-spacing:.5px;">Episodes — ${title.title}</h2>
+              <div class="modal-close" id="ep-close" style="position:static; background:var(--surface-2); color:var(--text);">${closeIcon()}</div>
+            </div>
+            <div id="ep-list" style="max-height:35vh; overflow-y:auto; margin-bottom:16px;">${renderEpisodeList()}</div>
+            <div style="font-size:11px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px;">Add episode</div>
+            <form id="ep-form" class="admin-form">
+              <div class="admin-form-row">
+                <div><label>Season</label><input name="season_number" type="number" min="1" value="1" required /></div>
+                <div><label>Episode</label><input name="episode_number" type="number" min="1" required /></div>
+              </div>
+              <div><label>Name</label><input name="name" required /></div>
+              <div><label>Video URL</label><input name="video_url" placeholder="https://youtube.com/watch?v=... or direct file URL" /></div>
+              <div><label>Description (optional)</label><input name="description" /></div>
+              <div class="auth-error" id="ep-error"></div>
+              <button type="submit" class="btn btn-gold" style="justify-content:center; margin-top:4px;">Add episode</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    `;
+    root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
+    });
+    document.getElementById('ep-close').onclick = () => root.innerHTML = '';
+
+    document.querySelectorAll('[data-delete-ep]').forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('Delete this episode?')) return;
+        await api(`/admin/episodes/${btn.dataset.deleteEp}`, { method: 'DELETE' });
+        episodes = episodes.filter(e => e.id !== Number(btn.dataset.deleteEp));
+        paint();
+      };
+    });
+    document.querySelectorAll('[data-edit-ep]').forEach(btn => {
+      btn.onclick = () => {
+        const ep = episodes.find(e => e.id === Number(btn.dataset.editEp));
+        const newVideoUrl = prompt('Video URL for this episode:', ep.video_url || '');
+        if (newVideoUrl === null) return;
+        api(`/admin/episodes/${ep.id}`, { method: 'PUT', body: JSON.stringify({ video_url: newVideoUrl }) })
+          .then(updated => { ep.video_url = updated.video_url; paint(); showToast('Episode updated'); });
+      };
+    });
+
+    document.getElementById('ep-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const errEl = document.getElementById('ep-error');
+      try {
+        const created = await api(`/admin/titles/${title.id}/episodes`, {
+          method: 'POST',
+          body: JSON.stringify({
+            season_number: Number(fd.get('season_number')) || 1,
+            episode_number: Number(fd.get('episode_number')),
+            name: fd.get('name'),
+            description: fd.get('description') || null,
+            video_url: fd.get('video_url') || null,
+          }),
+        });
+        episodes.push(created);
+        showToast('Episode added');
+        paint();
+      } catch (err) {
+        errEl.textContent = err.message;
+      }
+    });
+  }
+
+  paint();
 }
 
 async function init() {

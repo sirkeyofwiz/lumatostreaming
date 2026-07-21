@@ -129,6 +129,16 @@ main{flex:1; min-width:0; padding:22px 32px 60px;}
 .auth-hint{margin-top:14px; font-size:12.5px; color:var(--text-dim); text-align:center;}
 .auth-hint-link, #auth-switch{color:var(--teal); cursor:pointer; font-weight:600;}
 
+/* ---------- Episodes ---------- */
+.episode-list{display:flex; flex-direction:column; gap:4px;}
+.episode-season-label{font-size:11px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:.5px; margin:14px 0 6px;}
+.episode-season-label:first-child{margin-top:0;}
+.episode-row{display:flex; align-items:center; gap:12px; padding:9px 10px; border-radius:8px; cursor:pointer;}
+.episode-row:hover{background:var(--surface-2);}
+.episode-play-icon{width:28px; height:28px; border-radius:50%; background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--teal); flex-shrink:0;}
+.episode-name{font-size:13.5px; font-weight:600;}
+.episode-desc{font-size:12px; color:var(--text-dim); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+
 /* ---------- Toast ---------- */
 .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--surface-2); border:1px solid var(--border); padding:10px 18px; border-radius:10px; font-size:13px; opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:60;}
 .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
