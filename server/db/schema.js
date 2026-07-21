@@ -34,6 +34,17 @@ const sqliteSchema = `
     added_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(user_id, title_id)
   );
+
+  CREATE TABLE IF NOT EXISTS episodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+    season_number INTEGER NOT NULL DEFAULT 1,
+    episode_number INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    video_url TEXT,
+    UNIQUE(title_id, season_number, episode_number)
+  );
 `;
 
 const pgSchema = `
@@ -71,6 +82,17 @@ const pgSchema = `
     title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
     added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(user_id, title_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS episodes (
+    id SERIAL PRIMARY KEY,
+    title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+    season_number INTEGER NOT NULL DEFAULT 1,
+    episode_number INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    video_url TEXT,
+    UNIQUE(title_id, season_number, episode_number)
   );
 `;
 
