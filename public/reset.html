@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reset your password — LumatoStreaming</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<style>
+  body{display:flex; align-items:center; justify-content:center; min-height:100vh;}
+  .reset-card{width:100%; max-width:380px; background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:28px;}
+  .reset-logo{display:flex; align-items:center; gap:10px; margin-bottom:22px;}
+  #reset-form{display:flex; flex-direction:column; gap:12px;}
+  #reset-form input{width:100%; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:11px 12px; color:var(--text); font-size:14px; font-family:inherit; outline:none;}
+  #reset-form input:focus{border-color:var(--teal);}
+  .reset-msg{font-size:13px; text-align:center; margin-top:10px;}
+  .reset-msg.error{color:var(--red);}
+  .reset-msg.success{color:var(--teal);}
+</style>
+</head>
+<body>
+
+<div class="reset-card">
+  <div class="reset-logo">
+    <div class="logo-mark"></div>
+    <div class="logo-text">LUMATOSTREAMING</div>
+  </div>
+  <h2 style="font-family:'Bebas Neue', sans-serif; font-size:24px; font-weight:400; letter-spacing:.5px; margin-bottom:16px;">Choose a new password</h2>
+  <form id="reset-form">
+    <input type="password" name="password" placeholder="New password (min 6 characters)" required minlength="6" />
+    <input type="password" name="confirm" placeholder="Confirm new password" required minlength="6" />
+    <button type="submit" class="btn btn-gold" style="width:100%; justify-content:center; margin-top:4px;">Reset password</button>
+  </form>
+  <div class="reset-msg" id="reset-msg"></div>
+</div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  const msgEl = document.getElementById('reset-msg');
+  const form = document.getElementById('reset-form');
+
+  if (!token) {
+    form.style.display = 'none';
+    msgEl.textContent = 'This reset link is missing its token. Request a new one from the sign-in page.';
+    msgEl.className = 'reset-msg error';
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const password = fd.get('password');
+    const confirm = fd.get('confirm');
+    msgEl.textContent = '';
+    msgEl.className = 'reset-msg';
+
+    if (password !== confirm) {
+      msgEl.textContent = 'Passwords do not match.';
+      msgEl.className = 'reset-msg error';
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+      form.style.display = 'none';
+      msgEl.textContent = 'Password updated. You can sign in with it now.';
+      msgEl.className = 'reset-msg success';
+      setTimeout(() => { window.location.href = '/'; }, 2000);
+    } catch (err) {
+      msgEl.textContent = err.message;
+      msgEl.className = 'reset-msg error';
+    }
+  });
+</script>
+
+</body>
+</html>

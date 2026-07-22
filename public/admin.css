@@ -5,6 +5,7 @@
 .admin-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;}
 .admin-head h1{font-family:'Bebas Neue', sans-serif; font-size:32px; letter-spacing:.5px; font-weight:400;}
 .admin-table{width:100%; border-collapse:collapse; font-size:13.5px;}
+.admin-table-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch;}
 .admin-table th{text-align:left; color:var(--text-dim); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.4px; padding:10px 12px; border-bottom:1px solid var(--border);}
 .admin-table td{padding:12px; border-bottom:1px solid var(--border); vertical-align:middle;}
 .admin-table tr:hover td{background:var(--surface);}
@@ -20,3 +21,13 @@
 .admin-form-row{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
 .admin-checkbox{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text);}
 .admin-checkbox input{width:auto;}
+
+@media (max-width: 700px){
+  .admin-wrap{padding:16px;}
+  .admin-topbar{flex-wrap:wrap; gap:10px; margin-bottom:20px;}
+  .admin-head{flex-wrap:wrap; gap:10px;}
+  .admin-head > div{width:100%; display:flex; gap:8px;}
+  .admin-head .btn{flex:1; justify-content:center;}
+  .admin-table th, .admin-table td{padding:8px 10px; white-space:nowrap;}
+  .row-actions{flex-wrap:nowrap;}
+}

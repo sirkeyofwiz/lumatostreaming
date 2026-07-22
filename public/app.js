@@ -117,8 +117,12 @@ function renderTopbar() {
         <span>${state.user.username}</span>
         ${state.user.is_admin ? '<span class="tag" style="color:#241706;background:var(--gold)">ADMIN</span>' : ''}
       </div>
+      ${!state.user.email ? `<div class="auth-hint-link" id="add-email-link" style="font-size:12px;">Add recovery email</div>` : ''}
       <div class="btn btn-outline" id="logout-btn">Sign out</div>
     `;
+    if (!state.user.email) {
+      document.getElementById('add-email-link').onclick = () => openAddEmail();
+    }
     document.getElementById('logout-btn').onclick = async () => {
       await api('/auth/logout', { method: 'POST' });
       state.user = null;
@@ -168,6 +172,7 @@ function openAuthModal(mode) {
           </div>
           <form id="auth-form">
             <input type="text" name="username" placeholder="Username" autocomplete="username" required />
+            ${!isLogin ? `<input type="email" name="email" placeholder="Email (for password resets)" autocomplete="email" required />` : ''}
             <input type="password" name="password" placeholder="Password" autocomplete="${isLogin ? 'current-password' : 'new-password'}" required />
             <div class="auth-error" id="auth-error"></div>
             <button type="submit" class="btn btn-gold" style="width:100%; justify-content:center; margin-top:6px;">
@@ -175,6 +180,7 @@ function openAuthModal(mode) {
             </button>
           </form>
           <div class="auth-hint">${isLogin ? "New here?" : 'Already have an account?'} <span id="auth-switch">${isLogin ? 'Create an account' : 'Sign in'}</span></div>
+          ${isLogin ? `<div class="auth-hint" style="margin-top:6px;"><span id="auth-forgot">Forgot your password?</span></div>` : ''}
         </div>
       </div>
     </div>
@@ -183,13 +189,16 @@ function openAuthModal(mode) {
     if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
   });
   document.getElementById('auth-switch').onclick = () => openAuthModal(isLogin ? 'register' : 'login');
+  if (isLogin) {
+    document.getElementById('auth-forgot').onclick = () => openForgotPassword();
+  }
   root.querySelectorAll('.auth-tab').forEach(tab => {
     tab.onclick = () => openAuthModal(tab.dataset.mode);
   });
   document.getElementById('auth-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const body = JSON.stringify({ username: fd.get('username'), password: fd.get('password') });
+    const body = JSON.stringify({ username: fd.get('username'), email: fd.get('email'), password: fd.get('password') });
     const errEl = document.getElementById('auth-error');
     errEl.textContent = '';
     try {
@@ -206,6 +215,76 @@ function openAuthModal(mode) {
       if (state.route === 'watchlist') render();
     } catch (err) {
       errEl.textContent = 'Could not reach the server.';
+    }
+  });
+}
+
+function openAddEmail() {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal" style="max-width:380px;">
+        <div class="modal-body">
+          <h2 style="font-family:'Bebas Neue', sans-serif; font-size:22px; font-weight:400; letter-spacing:.5px; margin-bottom:6px;">Add a recovery email</h2>
+          <p style="font-size:12.5px; color:var(--text-dim); margin-bottom:14px;">Your account doesn't have one yet — without it you can't reset your password if you forget it.</p>
+          <form id="add-email-form">
+            <input type="email" name="email" placeholder="you@example.com" required style="width:100%; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:11px 12px; color:var(--text); font-size:14px; margin-bottom:10px;" />
+            <button type="submit" class="btn btn-gold" style="width:100%; justify-content:center;">Save</button>
+          </form>
+          <div class="auth-error" id="add-email-error" style="margin-top:8px;"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
+  });
+  document.getElementById('add-email-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = new FormData(e.target).get('email');
+    const errEl = document.getElementById('add-email-error');
+    try {
+      const updated = await api('/auth/email', { method: 'PUT', body: JSON.stringify({ email }) });
+      state.user = updated;
+      root.innerHTML = '';
+      renderTopbar();
+      showToast('Recovery email added');
+    } catch (err) {
+      errEl.textContent = err.message;
+    }
+  });
+}
+
+function openForgotPassword() {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal" style="max-width:380px;">
+        <div class="modal-body">
+          <h2 style="font-family:'Bebas Neue', sans-serif; font-size:22px; font-weight:400; letter-spacing:.5px; margin-bottom:14px;">Reset your password</h2>
+          <form id="forgot-form">
+            <input type="email" name="email" placeholder="Your account email" required style="width:100%; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:11px 12px; color:var(--text); font-size:14px; margin-bottom:10px;" />
+            <button type="submit" class="btn btn-gold" style="width:100%; justify-content:center;">Send reset link</button>
+          </form>
+          <div class="auth-error" id="forgot-msg" style="margin-top:10px;"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
+  });
+  document.getElementById('forgot-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = new FormData(e.target).get('email');
+    const msgEl = document.getElementById('forgot-msg');
+    try {
+      const data = await api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
+      msgEl.style.color = 'var(--teal)';
+      msgEl.textContent = data.message;
+    } catch (err) {
+      msgEl.style.color = 'var(--red)';
+      msgEl.textContent = 'Something went wrong. Try again.';
     }
   });
 }

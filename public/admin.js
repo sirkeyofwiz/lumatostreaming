@@ -10,6 +10,30 @@ async function api(path, opts) {
   return data;
 }
 
+// Gets a presigned URL from our server, then PUTs the file directly to R2
+// (not through our server — important for large video files). Returns the
+// permanent public URL once upload completes.
+async function uploadFile(file, kind, onProgress) {
+  const presign = await api('/admin/uploads/presign', {
+    method: 'POST',
+    body: JSON.stringify({ filename: file.name, contentType: file.type, kind }),
+  });
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', presign.uploadUrl);
+    xhr.setRequestHeader('Content-Type', file.type);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300)
+      ? resolve()
+      : reject(new Error(`Upload failed (${xhr.status})`));
+    xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+    xhr.send(file);
+  });
+  return presign.publicUrl;
+}
+
 function showToast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -143,14 +167,28 @@ function openForm(existing, prefill) {
               <label>Poster palette (0-7) — used only if there's no poster image above</label>
               <input name="palette" type="number" min="0" max="7" value="${t.palette ?? 0}" />
             </div>
-            <input type="hidden" name="poster_url" value="${posterUrl || ''}" />
+            <div>
+              <label>Poster image</label>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <img id="poster-preview" src="${posterUrl || ''}" style="width:44px; height:64px; object-fit:cover; border-radius:6px; background:var(--surface-2); ${posterUrl ? '' : 'display:none;'}" />
+                <input type="file" id="poster-file-input" accept="image/*" style="flex:1;" />
+              </div>
+              <div id="poster-upload-status" style="font-size:11.5px; color:var(--text-dim); margin-top:4px;"></div>
+              <input type="hidden" name="poster_url" id="poster-url-hidden" value="${posterUrl || ''}" />
+            </div>
+            <input type="hidden" name="tmdb_id" value="${t.tmdb_id || t.tmdbId || ''}" />
             <div>
               <label>Backdrop image URL (used for the homepage hero — wide image, different from the poster above)</label>
               <input name="backdrop_url" value="${backdropUrl || ''}" placeholder="https://..." />
             </div>
             <div>
               <label>Video URL — YouTube/Vimeo link, or a direct link to a video file you host</label>
-              <input name="video_url" value="${t.video_url || ''}" placeholder="https://youtube.com/watch?v=... or https://.../file.mp4" />
+              <input name="video_url" id="video-url-input" value="${t.video_url || ''}" placeholder="https://youtube.com/watch?v=... or https://.../file.mp4" />
+              <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+                <span style="font-size:11.5px; color:var(--text-dim);">or upload a file:</span>
+                <input type="file" id="video-file-input" accept="video/*" style="flex:1;" />
+              </div>
+              <div id="video-upload-status" style="font-size:11.5px; color:var(--text-dim); margin-top:4px;"></div>
             </div>
             <div style="display:flex; gap:20px;">
               <label class="admin-checkbox"><input type="checkbox" name="premium" ${t.premium ? 'checked' : ''}/> Premium</label>
@@ -170,6 +208,37 @@ function openForm(existing, prefill) {
   });
   document.getElementById('form-close').onclick = () => root.innerHTML = '';
 
+  document.getElementById('poster-file-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const statusEl = document.getElementById('poster-upload-status');
+    statusEl.textContent = 'Uploading... 0%';
+    try {
+      const url = await uploadFile(file, 'poster', (pct) => statusEl.textContent = `Uploading... ${pct}%`);
+      document.getElementById('poster-url-hidden').value = url;
+      const preview = document.getElementById('poster-preview');
+      preview.src = url;
+      preview.style.display = '';
+      statusEl.textContent = 'Uploaded.';
+    } catch (err) {
+      statusEl.textContent = err.message;
+    }
+  });
+
+  document.getElementById('video-file-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const statusEl = document.getElementById('video-upload-status');
+    statusEl.textContent = 'Uploading... 0%';
+    try {
+      const url = await uploadFile(file, 'video', (pct) => statusEl.textContent = `Uploading... ${pct}%`);
+      document.getElementById('video-url-input').value = url;
+      statusEl.textContent = 'Uploaded — video URL filled in above.';
+    } catch (err) {
+      statusEl.textContent = err.message;
+    }
+  });
+
   document.getElementById('title-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -186,6 +255,7 @@ function openForm(existing, prefill) {
       director: fd.get('director'),
       palette: Number(fd.get('palette')) || 0,
       poster_url: fd.get('poster_url') || null,
+      tmdb_id: fd.get('tmdb_id') ? Number(fd.get('tmdb_id')) : null,
       backdrop_url: fd.get('backdrop_url') || null,
       video_url: fd.get('video_url') || null,
       premium: fd.get('premium') === 'on',
@@ -336,6 +406,15 @@ async function openEpisodeManager(title) {
               <div class="modal-close" id="ep-close" style="position:static; background:var(--surface-2); color:var(--text);">${closeIcon()}</div>
             </div>
             <div id="ep-list" style="max-height:35vh; overflow-y:auto; margin-bottom:16px;">${renderEpisodeList()}</div>
+            ${title.tmdb_id ? `
+              <div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:18px; padding:12px; background:var(--surface-2); border-radius:8px;">
+                <div style="flex:1;">
+                  <label style="font-size:11.5px; color:var(--text-dim); display:block; margin-bottom:5px;">Import season from TMDB (names only — you still add video links)</label>
+                  <input id="tmdb-season-input" type="number" min="1" value="1" style="width:100%; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 10px; color:var(--text); font-size:13px;" />
+                </div>
+                <div class="btn btn-outline" id="tmdb-import-season-btn" style="padding:8px 14px; font-size:12.5px;">Import</div>
+              </div>
+            ` : ''}
             <div style="font-size:11px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px;">Add episode</div>
             <form id="ep-form" class="admin-form">
               <div class="admin-form-row">
@@ -343,7 +422,15 @@ async function openEpisodeManager(title) {
                 <div><label>Episode</label><input name="episode_number" type="number" min="1" required /></div>
               </div>
               <div><label>Name</label><input name="name" required /></div>
-              <div><label>Video URL</label><input name="video_url" placeholder="https://youtube.com/watch?v=... or direct file URL" /></div>
+              <div>
+                <label>Video URL</label>
+                <input name="video_url" id="ep-video-url-input" placeholder="https://youtube.com/watch?v=... or direct file URL" />
+                <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+                  <span style="font-size:11.5px; color:var(--text-dim);">or upload a file:</span>
+                  <input type="file" id="ep-video-file-input" accept="video/*" style="flex:1;" />
+                </div>
+                <div id="ep-video-upload-status" style="font-size:11.5px; color:var(--text-dim); margin-top:4px;"></div>
+              </div>
               <div><label>Description (optional)</label><input name="description" /></div>
               <div class="auth-error" id="ep-error"></div>
               <button type="submit" class="btn btn-gold" style="justify-content:center; margin-top:4px;">Add episode</button>
@@ -352,10 +439,43 @@ async function openEpisodeManager(title) {
         </div>
       </div>
     `;
+    if (title.tmdb_id) {
+      document.getElementById('tmdb-import-season-btn').onclick = async () => {
+        const seasonNum = Number(document.getElementById('tmdb-season-input').value) || 1;
+        const btn = document.getElementById('tmdb-import-season-btn');
+        btn.textContent = 'Importing...';
+        try {
+          const result = await api(`/admin/titles/${title.id}/episodes/import-tmdb`, {
+            method: 'POST',
+            body: JSON.stringify({ season_number: seasonNum }),
+          });
+          episodes = result.episodes;
+          showToast(`Imported ${result.imported} episode(s)${result.skipped ? `, ${result.skipped} already existed` : ''}`);
+          paint();
+        } catch (err) {
+          showToast(err.message);
+          btn.textContent = 'Import';
+        }
+      };
+    }
     root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
       if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
     });
     document.getElementById('ep-close').onclick = () => root.innerHTML = '';
+
+    document.getElementById('ep-video-file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById('ep-video-upload-status');
+      statusEl.textContent = 'Uploading... 0%';
+      try {
+        const url = await uploadFile(file, 'video', (pct) => statusEl.textContent = `Uploading... ${pct}%`);
+        document.getElementById('ep-video-url-input').value = url;
+        statusEl.textContent = 'Uploaded — video URL filled in above.';
+      } catch (err) {
+        statusEl.textContent = err.message;
+      }
+    });
 
     document.querySelectorAll('[data-delete-ep]').forEach(btn => {
       btn.onclick = async () => {
