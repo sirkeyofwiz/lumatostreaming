@@ -30,6 +30,7 @@ function toPgSql(sql) {
 
 module.exports = {
   kind: 'postgres',
+  pool,
 
   async all(sql, params = []) {
     const res = await pool.query(toPgSql(sql), params);

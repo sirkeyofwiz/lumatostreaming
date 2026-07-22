@@ -21,10 +21,7 @@ const sqliteSchema = `
     "cast" TEXT NOT NULL,
     director TEXT NOT NULL,
     palette INTEGER NOT NULL DEFAULT 0,
-    featured INTEGER NOT NULL DEFAULT 0,
-    poster_url TEXT,
-    backdrop_url TEXT,
-    video_url TEXT
+    featured INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS watchlist (
@@ -70,10 +67,7 @@ const pgSchema = `
     "cast" TEXT NOT NULL,
     director TEXT NOT NULL,
     palette INTEGER NOT NULL DEFAULT 0,
-    featured BOOLEAN NOT NULL DEFAULT FALSE,
-    poster_url TEXT,
-    backdrop_url TEXT,
-    video_url TEXT
+    featured BOOLEAN NOT NULL DEFAULT FALSE
   );
 
   CREATE TABLE IF NOT EXISTS watchlist (
@@ -96,31 +90,43 @@ const pgSchema = `
   );
 `;
 
+// Columns added after the tables were first created. CREATE TABLE IF NOT
+// EXISTS above only helps brand-new databases — existing ones (like a live
+// production DB) need an explicit ALTER TABLE, run only if the column isn't
+// already there. Add new entries here instead of writing one-off ALTERs.
+const COLUMN_ADDITIONS = [
+  { table: 'titles', column: 'poster_url', type: 'TEXT' },
+  { table: 'titles', column: 'backdrop_url', type: 'TEXT' },
+  { table: 'titles', column: 'video_url', type: 'TEXT' },
+  { table: 'titles', column: 'tmdb_id', type: 'INTEGER' },
+  { table: 'users', column: 'email', type: 'TEXT' },
+  { table: 'users', column: 'reset_token', type: 'TEXT' },
+  { table: 'users', column: 'reset_token_expires', type: db => (db.kind === 'postgres' ? 'TIMESTAMPTZ' : 'TEXT') },
+];
+
 async function ensureSchema(db) {
   await db.exec(db.kind === 'postgres' ? pgSchema : sqliteSchema);
   await migrate(db);
 }
 
-// Handles columns added after a database was first created — CREATE TABLE
-// IF NOT EXISTS above only helps on brand new databases. Existing ones
-// (like a live production DB) need an explicit ALTER TABLE, run only if
-// the column isn't already there.
 async function migrate(db) {
   if (db.kind === 'postgres') {
-    await db.exec(`ALTER TABLE titles ADD COLUMN IF NOT EXISTS poster_url TEXT`);
-    await db.exec(`ALTER TABLE titles ADD COLUMN IF NOT EXISTS backdrop_url TEXT`);
-    await db.exec(`ALTER TABLE titles ADD COLUMN IF NOT EXISTS video_url TEXT`);
+    for (const { table, column, type } of COLUMN_ADDITIONS) {
+      const t = typeof type === 'function' ? type(db) : type;
+      await db.exec(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${t}`);
+    }
   } else {
-    const cols = await db.all(`PRAGMA table_info(titles)`);
-    const names = cols.map(c => c.name);
-    if (!names.includes('poster_url')) {
-      await db.exec(`ALTER TABLE titles ADD COLUMN poster_url TEXT`);
+    const tableCols = {};
+    for (const { table } of COLUMN_ADDITIONS) {
+      if (!tableCols[table]) {
+        tableCols[table] = (await db.all(`PRAGMA table_info(${table})`)).map(c => c.name);
+      }
     }
-    if (!names.includes('backdrop_url')) {
-      await db.exec(`ALTER TABLE titles ADD COLUMN backdrop_url TEXT`);
-    }
-    if (!names.includes('video_url')) {
-      await db.exec(`ALTER TABLE titles ADD COLUMN video_url TEXT`);
+    for (const { table, column, type } of COLUMN_ADDITIONS) {
+      if (!tableCols[table].includes(column)) {
+        const t = typeof type === 'function' ? type(db) : type;
+        await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${t}`);
+      }
     }
   }
 }
