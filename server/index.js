@@ -1,11 +1,15 @@
 const express = require('express');
 const session = require('express-session');
+const PgSession = require('connect-pg-simple')(session);
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const path = require('path');
+const crypto = require('crypto');
 const db = require('./db');
 const tmdb = require('./tmdb');
 const anilist = require('./anilist');
+const mailer = require('./mailer');
+const storage = require('./storage');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -41,9 +45,13 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
     secure: process.env.NODE_ENV === 'production',
   },
-  // Note: the default MemoryStore is fine for local dev/demo use only —
-  // it leaks memory and resets on restart. For a real deploy, swap in
-  // connect-pg-simple (if using Postgres) or another persistent store.
+  // On Postgres, sessions persist in a real "session" table (auto-created
+  // below) so logins survive deploys/restarts. Locally on SQLite there's
+  // no persistent store wired up, so it falls back to express-session's
+  // in-memory default — fine for local dev, where restarts are expected anyway.
+  store: db.kind === 'postgres'
+    ? new PgSession({ pool: db.pool, tableName: 'session', createTableIfMissing: true })
+    : undefined,
 }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -71,25 +79,30 @@ function requireAdmin(req, res, next) {
 }
 
 function publicUser(u) {
-  return { id: u.id, username: u.username, is_admin: !!u.is_admin };
+  return { id: u.id, username: u.username, is_admin: !!u.is_admin, email: u.email || null };
 }
 
 // ---------- Auth ----------
 
 app.post('/api/auth/register', ah(async (req, res) => {
-  const { username, password } = req.body || {};
+  const { username, email, password } = req.body || {};
   if (!username || !password || password.length < 6) {
     return res.status(400).json({ error: 'Username and a password of at least 6 characters are required.' });
   }
-  const existing = await db.get('SELECT id FROM users WHERE username = ?', [username]);
-  if (existing) return res.status(409).json({ error: 'That username is already taken.' });
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'A valid email is required (used for password resets).' });
+  }
+  const existingUsername = await db.get('SELECT id FROM users WHERE username = ?', [username]);
+  if (existingUsername) return res.status(409).json({ error: 'That username is already taken.' });
+  const existingEmail = await db.get('SELECT id FROM users WHERE email = ?', [email]);
+  if (existingEmail) return res.status(409).json({ error: 'That email is already registered.' });
 
   const hash = await bcrypt.hash(password, 10);
   const result = await db.run(
-    'INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 0) RETURNING id',
-    [username, hash]
+    'INSERT INTO users (username, email, password_hash, is_admin) VALUES (?, ?, ?, FALSE) RETURNING id',
+    [username, email, hash]
   );
-  const user = { id: result.lastID, username, is_admin: 0 };
+  const user = { id: result.lastID, username, email, is_admin: 0 };
   req.session.user = publicUser(user);
   res.status(201).json(req.session.user);
 }));
@@ -111,6 +124,146 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', (req, res) => {
   res.json(req.session.user || null);
 });
+
+// Lets an already-signed-in user add/update their email — mainly for
+// accounts created before email was required (e.g. the seeded admin).
+app.put('/api/auth/email', requireAuth, ah(async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Please enter a valid email.' });
+  }
+  const existing = await db.get('SELECT id FROM users WHERE email = ? AND id != ?', [email, req.session.user.id]);
+  if (existing) return res.status(409).json({ error: 'That email is already registered to another account.' });
+
+  await db.run('UPDATE users SET email = ? WHERE id = ?', [email, req.session.user.id]);
+  req.session.user.email = email;
+  res.json(req.session.user);
+}));
+
+app.post('/api/auth/forgot-password', ah(async (req, res) => {
+  const { email } = req.body || {};
+  // Always return the same generic response whether or not the email is
+  // registered — otherwise this endpoint would let anyone check which
+  // emails have accounts here.
+  const generic = { ok: true, message: 'If that email is registered, a reset link has been sent.' };
+  if (!email) return res.json(generic);
+
+  const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+  if (!user) return res.json(generic);
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  await db.run('UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?', [
+    token, db.kind === 'postgres' ? expires : expires.toISOString(), user.id,
+  ]);
+
+  const origin = `${req.protocol}://${req.get('host')}`;
+  const resetLink = `${origin}/reset.html?token=${token}`;
+
+  try {
+    await mailer.sendEmail({
+      to: email,
+      subject: 'Reset your LumatoStreaming password',
+      html: `
+        <p>Someone requested a password reset for your LumatoStreaming account.</p>
+        <p><a href="${resetLink}">Click here to choose a new password</a>. This link expires in 1 hour.</p>
+        <p>If you didn't request this, you can safely ignore this email.</p>
+      `,
+    });
+  } catch (err) {
+    // Don't leak configuration/delivery errors to the client — same
+    // generic response either way, but log server-side for debugging.
+    console.error('Password reset email failed:', err.message);
+  }
+
+  res.json(generic);
+}));
+
+app.post('/api/auth/reset-password', ah(async (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token || !password || password.length < 6) {
+    return res.status(400).json({ error: 'A new password of at least 6 characters is required.' });
+  }
+  const user = await db.get('SELECT * FROM users WHERE reset_token = ?', [token]);
+  if (!user) return res.status(400).json({ error: 'This reset link is invalid or has already been used.' });
+
+  const expires = new Date(user.reset_token_expires);
+  if (Number.isNaN(expires.getTime()) || expires < new Date()) {
+    return res.status(400).json({ error: 'This reset link has expired. Request a new one.' });
+  }
+
+  const hash = await bcrypt.hash(password, 10);
+  await db.run('UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?', [hash, user.id]);
+  res.json({ ok: true });
+}));
+
+// Lets an already-logged-in user without an email (e.g. the seeded admin
+// account) add one later, so password reset becomes available to them too.
+app.put('/api/auth/email', requireAuth, ah(async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'A valid email is required.' });
+  }
+  const existing = await db.get('SELECT id FROM users WHERE email = ? AND id != ?', [email, req.session.user.id]);
+  if (existing) return res.status(409).json({ error: 'That email is already registered to another account.' });
+
+  await db.run('UPDATE users SET email = ? WHERE id = ?', [email, req.session.user.id]);
+  req.session.user.email = email;
+  res.json(req.session.user);
+}));
+
+app.post('/api/auth/forgot-password', ah(async (req, res) => {
+  const { email } = req.body || {};
+  const genericResponse = { ok: true, message: 'If that email is registered, a reset link has been sent.' };
+
+  if (!email) return res.json(genericResponse);
+  const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+  if (!user) return res.json(genericResponse); // don't reveal whether the email exists
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  await db.run(
+    'UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?',
+    [token, expires.toISOString(), user.id]
+  );
+
+  const resetUrl = `${req.protocol}://${req.get('host')}/reset.html?token=${token}`;
+  try {
+    await mailer.sendEmail({
+      to: email,
+      subject: 'Reset your LumatoStreaming password',
+      html: `
+        <p>Someone requested a password reset for your LumatoStreaming account.</p>
+        <p><a href="${resetUrl}">Click here to choose a new password</a>. This link expires in 1 hour.</p>
+        <p>If you didn't request this, you can safely ignore this email.</p>
+      `,
+    });
+  } catch (err) {
+    // Don't leak email-service errors to the client — that would confirm
+    // whether the address is registered. Log it server-side instead.
+    console.error('Failed to send password reset email:', err.message);
+  }
+
+  res.json(genericResponse);
+}));
+
+app.post('/api/auth/reset-password', ah(async (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token || !password || password.length < 6) {
+    return res.status(400).json({ error: 'A valid token and a password of at least 6 characters are required.' });
+  }
+  const user = await db.get('SELECT * FROM users WHERE reset_token = ?', [token]);
+  if (!user || !user.reset_token_expires || new Date(user.reset_token_expires) < new Date()) {
+    return res.status(400).json({ error: 'This reset link is invalid or has expired.' });
+  }
+
+  const hash = await bcrypt.hash(password, 10);
+  await db.run(
+    'UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?',
+    [hash, user.id]
+  );
+  res.json({ ok: true });
+}));
 
 // ---------- Titles (public reads) ----------
 
@@ -203,6 +356,39 @@ app.delete('/api/admin/episodes/:id', requireAdmin, ah(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Bulk-imports a season's episode list from TMDB (names/descriptions only —
+// video_url is left blank for the admin to fill in per episode afterward).
+// Only works for titles that were themselves imported from TMDB.
+app.post('/api/admin/titles/:id/episodes/import-tmdb', requireAdmin, ah(async (req, res) => {
+  const { season_number } = req.body || {};
+  const title = await db.get('SELECT * FROM titles WHERE id = ?', [req.params.id]);
+  if (!title) return res.status(404).json({ error: 'Title not found.' });
+  if (!title.tmdb_id) return res.status(400).json({ error: 'This title was not imported from TMDB, so there\'s no season data to pull.' });
+
+  let episodes;
+  try {
+    episodes = await tmdb.seasonEpisodes(title.tmdb_id, season_number || 1);
+  } catch (err) {
+    if (err.code === 'NO_TMDB_KEY') return res.status(501).json({ error: err.message });
+    return res.status(502).json({ error: 'Could not reach TMDB. Try again in a moment.' });
+  }
+
+  let imported = 0;
+  for (const ep of episodes) {
+    const result = await db.run(
+      `INSERT INTO episodes (title_id, season_number, episode_number, name, description)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT (title_id, season_number, episode_number) DO NOTHING`,
+      [req.params.id, season_number || 1, ep.episode_number, ep.name, ep.description]
+    );
+    if (result.changes) imported++;
+  }
+  const rows = await db.all(
+    'SELECT * FROM episodes WHERE title_id = ? ORDER BY season_number ASC, episode_number ASC',
+    [req.params.id]
+  );
+  res.json({ imported, skipped: episodes.length - imported, episodes: rows });
+}));
+
 // ---------- Watchlist (per signed-in user) ----------
 
 app.get('/api/watchlist', requireAuth, ah(async (req, res) => {
@@ -272,6 +458,31 @@ app.get('/api/admin/anilist/:id', requireAdmin, ah(async (req, res) => {
   }
 }));
 
+// ---------- File uploads (admin only) ----------
+
+app.post('/api/admin/uploads/presign', requireAdmin, ah(async (req, res) => {
+  const { filename, contentType, kind } = req.body || {};
+  if (!filename || !contentType) {
+    return res.status(400).json({ error: 'filename and contentType are required.' });
+  }
+  if (!storage.isConfigured()) {
+    return res.status(501).json({ error: 'File uploads are not configured on this server.' });
+  }
+  const isVideo = contentType.startsWith('video/');
+  const isImage = contentType.startsWith('image/');
+  if (!isVideo && !isImage) {
+    return res.status(400).json({ error: 'Only image and video files are supported.' });
+  }
+  const folder = kind === 'video' || isVideo ? 'videos' : 'posters';
+  try {
+    const result = await storage.presignUpload({ filename, contentType, folder });
+    res.json(result);
+  } catch (err) {
+    if (err.code === 'NO_R2_CONFIG') return res.status(501).json({ error: err.message });
+    res.status(502).json({ error: 'Could not prepare the upload. Try again.' });
+  }
+}));
+
 // ---------- Admin catalog management ----------
 
 app.get('/api/admin/titles', requireAdmin, ah(async (req, res) => {
@@ -285,11 +496,12 @@ app.post('/api/admin/titles', requireAdmin, ah(async (req, res) => {
     return res.status(400).json({ error: 'title, type, year, genre, and rating are required.' });
   }
   const result = await db.run(
-    `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, "cast", director, palette, featured, poster_url, backdrop_url, video_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    `INSERT INTO titles (title, type, year, genre, runtime, seasons, rating, premium, description, "cast", director, palette, featured, poster_url, backdrop_url, video_url, tmdb_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [t.title, t.type, t.year, t.genre, t.runtime || null, t.seasons || null, t.rating,
      t.premium ? 1 : 0, t.description || '', t.cast || '', t.director || '', t.palette || 0, t.featured ? 1 : 0,
-     t.posterUrl || t.poster_url || null, t.backdropUrl || t.backdrop_url || null, t.video_url || null]
+     t.posterUrl || t.poster_url || null, t.backdropUrl || t.backdrop_url || null, t.video_url || null,
+     t.tmdbId || t.tmdb_id || null]
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [result.lastID]);
   res.status(201).json(row);

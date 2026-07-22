@@ -1,5 +1,6 @@
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const IMG_BASE = 'https://image.tmdb.org/t/p/w500';
+const BACKDROP_BASE = 'https://image.tmdb.org/t/p/w1280';
 
 // TMDB's genre vocabulary is broader than ours — this maps their names to
 // the fixed genre list our own catalog uses. Anything unmapped falls back
@@ -92,6 +93,7 @@ async function details(tmdbId, ourType) {
   }
 
   return {
+    tmdbId: Number(tmdbId),
     title: t === 'tv' ? data.name : data.title,
     type: ourType,
     year: Number((t === 'tv' ? data.first_air_date : data.release_date || '').slice(0, 4)) || new Date().getFullYear(),
@@ -103,7 +105,17 @@ async function details(tmdbId, ourType) {
     cast: cast || 'Not listed',
     director: director || 'Not listed',
     posterUrl: data.poster_path ? IMG_BASE + data.poster_path : null,
+    backdropUrl: data.backdrop_path ? BACKDROP_BASE + data.backdrop_path : null,
   };
 }
 
-module.exports = { search, details };
+async function seasonEpisodes(tmdbId, seasonNumber) {
+  const data = await tmdbGet(`/tv/${tmdbId}/season/${seasonNumber}`);
+  return (data.episodes || []).map(e => ({
+    episode_number: e.episode_number,
+    name: e.name,
+    description: e.overview || null,
+  }));
+}
+
+module.exports = { search, details, seasonEpisodes };
