@@ -51,6 +51,38 @@ lumatostreaming/
 - Admins (`is_admin = true` in the `users` table) get access to `/admin.html` and the `/api/admin/*` routes for creating, editing, and deleting titles.
 - Sessions are cookie-based (`express-session`). The bundled `MemoryStore` is fine for local use but **resets on restart and leaks memory** — for a real deploy, swap in a persistent store (e.g. `connect-pg-simple` if you're already on Postgres).
 
+## Password reset (email via Resend)
+
+Users can request a password reset link, sent by email through [Resend](https://resend.com). Set:
+```
+RESEND_API_KEY=<your Resend API key>
+```
+Without a verified sending domain in Resend, email sends from their shared test address (`onboarding@resend.dev`) — fine to start with. Once you verify your own domain in the Resend dashboard, also set:
+```
+RESEND_FROM=LumatoStreaming <noreply@yourdomain.com>
+```
+Without `RESEND_API_KEY` set at all, the "Forgot password?" flow still responds normally (no error shown to the user) but no email actually sends — check the server logs if a reset isn't arriving.
+
+Accounts created before this feature (like the seeded `admin` user) won't have an email on file — they'll see an "Add recovery email" prompt in the top bar until they set one.
+
+## File uploads (Cloudflare R2)
+
+The admin panel can upload poster images and video files directly to [Cloudflare R2](https://developers.cloudflare.com/r2/) instead of only accepting pasted URLs. Uploads go straight from the browser to R2 (not through this server), so large video files aren't a problem.
+
+To set it up:
+1. In the Cloudflare dashboard, create an R2 bucket.
+2. Under **Settings** for that bucket, enable public access (or attach a custom domain) and note the public URL it gives you.
+3. Create an R2 API token (Account Home → R2 → Manage API Tokens) with read/write access to that bucket — this gives you an Access Key ID and Secret Access Key.
+4. Set these environment variables:
+   ```
+   R2_ACCOUNT_ID=<your Cloudflare account ID>
+   R2_ACCESS_KEY_ID=<from the API token>
+   R2_SECRET_ACCESS_KEY=<from the API token>
+   R2_BUCKET_NAME=<your bucket name>
+   R2_PUBLIC_URL=<the bucket's public URL, e.g. https://pub-xxxx.r2.dev>
+   ```
+Without these set, the upload file pickers in the admin panel will show an error, but pasting URLs manually still works exactly as before.
+
 ## Importing real titles from TMDB
 
 The admin panel has an **Import from TMDB** button that searches [The Movie Database](https://www.themoviedb.org) and pre-fills the add-title form with real data — poster, description, cast, rating — for you to review and edit before saving. The catalog itself is still your own database; TMDB is only used as a data source at import time, not a live dependency for browsing the site.
