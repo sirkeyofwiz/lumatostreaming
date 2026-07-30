@@ -587,3 +587,12 @@ document.getElementById('search-input').addEventListener('input', (e) => {
 });
 
 refreshUser().then(render);
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      // Non-fatal — the site works fine without the service worker,
+      // it just won't be installable/offline-capable.
+    });
+  });
+}
