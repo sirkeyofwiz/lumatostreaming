@@ -148,7 +148,7 @@ main{flex:1; min-width:0; padding:22px 32px 60px;}
 
 @media (max-width: 860px){
   .sidebar{display:none;}
-  main{padding:14px 14px 84px;}
+  main{padding:14px 14px 68px;}
   .hero-title{font-size:34px;}
   .hero{height:230px;}
   .topbar{gap:10px; flex-wrap:wrap;}
@@ -169,13 +169,13 @@ main{flex:1; min-width:0; padding:22px 32px 60px;}
     padding-bottom:env(safe-area-inset-bottom, 0);
   }
   .bottom-nav .nav-item{
-    flex:1; flex-direction:column; gap:3px;
-    padding:9px 4px 8px;
+    flex:1; flex-direction:column; gap:1px;
+    padding:6px 4px 5px;
     border-radius:0;
-    font-size:10.5px;
+    font-size:9.5px;
     text-align:center;
   }
-  .bottom-nav .nav-item svg{width:19px; height:19px;}
+  .bottom-nav .nav-item svg{width:16px; height:16px;}
   .bottom-nav .nav-item.active{background:transparent;}
 }
 
