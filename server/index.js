@@ -538,6 +538,10 @@ app.delete('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
 // instead of crashing the process.
 app.use((err, req, res, next) => {
   console.error('Request error:', err);
+  const isDuplicate = err.code === '23505' || (err.message && err.message.includes('UNIQUE constraint failed'));
+  if (isDuplicate) {
+    return res.status(409).json({ error: 'That already exists — check for a duplicate (e.g. this season/episode number is already added).' });
+  }
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
