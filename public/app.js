@@ -356,23 +356,15 @@ function downloadIcon() {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>`;
 }
 
-async function downloadVideo(url, filename) {
-  showToast('Preparing download...');
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Download failed');
-    const blob = await res.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = filename || 'video.mp4';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(blobUrl);
-  } catch (err) {
-    showToast('Download failed — try again.');
-  }
+function downloadVideo(url, filename) {
+  if (!url) { showToast('No video linked yet.'); return; }
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'video.mp4';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 async function openDetail(id) {
