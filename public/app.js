@@ -346,6 +346,35 @@ function attachCardHandlers(container) {
   });
 }
 
+function isDirectFile(url) {
+  if (!url) return false;
+  const embed = getVideoEmbed(url);
+  return embed && embed.type === 'video';
+}
+
+function downloadIcon() {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>`;
+}
+
+async function downloadVideo(url, filename) {
+  showToast('Preparing download...');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Download failed');
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename || 'video.mp4';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch (err) {
+    showToast('Download failed — try again.');
+  }
+}
+
 async function openDetail(id) {
   const item = await api(`/titles/${id}`);
   const root = document.getElementById('modal-root');
@@ -358,21 +387,29 @@ async function openDetail(id) {
 
   const episodesHtml = episodes.length ? `
     <div class="modal-row" style="margin-top:20px; margin-bottom:8px;"><span class="label">Episodes</span></div>
-    <div class="episode-list">
-      ${seasons.map(s => `
-        <div class="episode-season-label">Season ${s}</div>
+    ${seasons.map(s => `
+      <div class="episode-season-label">Season ${s}</div>
+      <div class="row">
         ${episodes.filter(e => e.season_number === s).map(e => `
-          <div class="episode-row" data-video="${e.video_url || ''}">
-            <div class="episode-play-icon">▶</div>
-            <div style="min-width:0;">
-              <div class="episode-name">S${e.season_number}E${e.episode_number} · ${e.name}</div>
-              ${e.description ? `<div class="episode-desc">${e.description}</div>` : ''}
+          <div class="episode-card">
+            <div class="episode-card-thumb" data-video="${e.video_url || ''}" data-title="${item.title} — S${e.season_number}E${e.episode_number}">
+              <div class="episode-card-num">E${e.episode_number}</div>
+              <div class="episode-card-play">▶</div>
             </div>
+            <div class="episode-card-name">${e.name}</div>
+            ${isDirectFile(e.video_url) ? `
+              <div class="episode-download-btn" data-video="${e.video_url}" data-filename="${item.title} - S${e.season_number}E${e.episode_number} - ${e.name}.mp4">
+                ${downloadIcon()} Download
+              </div>
+            ` : ''}
           </div>
         `).join('')}
-      `).join('')}
-    </div>
+      </div>
+    `).join('')}
   ` : '';
+
+  const mainVideoUrl = episodes.length ? episodes[0].video_url : item.video_url;
+  const showDownload = isDirectFile(mainVideoUrl);
 
   root.innerHTML = `
     <div class="modal-backdrop">
@@ -389,6 +426,7 @@ async function openDetail(id) {
           <div class="modal-row"><span class="label">Rating</span><span>${item.rating.toFixed(1)} / 10</span></div>
           <div class="modal-actions">
             <div class="btn btn-gold" id="modal-play">${episodes.length ? `Play S${episodes[0].season_number}E${episodes[0].episode_number}` : 'Play'}</div>
+            ${showDownload ? `<div class="btn btn-outline" id="modal-download">${downloadIcon()} Download</div>` : ''}
             <div class="btn btn-outline ${item.in_watchlist ? 'on' : ''}" id="modal-watch">
               ${item.in_watchlist ? 'In watchlist' : 'Add to watchlist'}
             </div>
@@ -406,9 +444,19 @@ async function openDetail(id) {
     if (episodes.length) openPlayer({ video_url: episodes[0].video_url, title: `${item.title} — S${episodes[0].season_number}E${episodes[0].episode_number}` });
     else openPlayer(item);
   };
-  root.querySelectorAll('.episode-row').forEach(row => {
-    row.addEventListener('click', () => {
-      openPlayer({ video_url: row.dataset.video, title: item.title });
+  const downloadBtn = document.getElementById('modal-download');
+  if (downloadBtn) {
+    downloadBtn.onclick = () => downloadVideo(mainVideoUrl, `${item.title}.mp4`);
+  }
+  root.querySelectorAll('.episode-card-thumb').forEach(thumb => {
+    thumb.addEventListener('click', () => {
+      openPlayer({ video_url: thumb.dataset.video, title: thumb.dataset.title });
+    });
+  });
+  root.querySelectorAll('.episode-download-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      downloadVideo(btn.dataset.video, btn.dataset.filename);
     });
   });
   const watchBtn = document.getElementById('modal-watch');
