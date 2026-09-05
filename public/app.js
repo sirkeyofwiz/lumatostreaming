@@ -657,6 +657,56 @@ async function render() {
 
   if (state.route !== 'home') clearInterval(heroTimer);
 
+    if (state.route === 'downloads') {
+    heroSlot.innerHTML = '';
+    filterBar.hidden = true;
+    const saved = await listOfflineVideos();
+    if (!saved.length) {
+      content.innerHTML = `
+        <div class="section">
+          <div class="section-head"><div class="section-title">Downloads</div></div>
+          <div class="empty-state">Nothing saved for offline viewing yet. Open any title with a video and tap "Save offline."</div>
+        </div>
+      `;
+      return;
+    }
+    content.innerHTML = `
+      <div class="section">
+        <div class="section-head"><div class="section-title">Downloads</div></div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          ${saved.sort((a, b) => b.savedAt - a.savedAt).map(v => `
+            <div class="download-row" data-key="${v.key}">
+              <div style="min-width:0;">
+                <div style="font-weight:600; font-size:14px;">${v.title}</div>
+                <div style="font-size:12px; color:var(--text-dim); margin-top:2px;">${formatBytes(v.blob.size)} · saved ${new Date(v.savedAt).toLocaleDateString()}</div>
+              </div>
+              <div style="display:flex; gap:8px; flex-shrink:0;">
+                <div class="btn btn-gold download-play-btn" style="padding:8px 14px; font-size:12.5px;">Play</div>
+                <div class="btn btn-outline download-remove-btn" style="padding:8px 14px; font-size:12.5px; color:var(--red); border-color:var(--red);">Remove</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    content.querySelectorAll('.download-play-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = btn.closest('.download-row');
+        const video = saved.find(v => v.key === row.dataset.key);
+        openPlayer({ offlineKey: video.key });
+      });
+    });
+    content.querySelectorAll('.download-remove-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const row = btn.closest('.download-row');
+        await deleteOfflineVideo(row.dataset.key);
+        showToast('Removed from downloads');
+        render();
+      });
+    });
+    return;
+  }
+  
   if (state.route === 'watchlist') {
     heroSlot.innerHTML = '';
     filterBar.hidden = true;
