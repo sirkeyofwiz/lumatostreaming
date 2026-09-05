@@ -512,9 +512,9 @@ async function openDetail(id) {
               <div class="episode-card-play">▶</div>
             </div>
             <div class="episode-card-name">${e.name}</div>
-            ${isDirectFile(e.video_url) ? `
-              <div class="episode-download-btn" data-video="${e.video_url}" data-filename="${item.title} - S${e.season_number}E${e.episode_number} - ${e.name}.mp4">
-                ${downloadIcon()} Download
+                      ${isDirectFile(e.video_url) ? `
+              <div class="episode-download-btn" data-key="episode-${e.id}" data-video="${e.video_url}" data-title="${item.title} — S${e.season_number}E${e.episode_number} — ${e.name}">
+                ${downloadIcon()} ${offlineKeys.has(`episode-${e.id}`) ? 'Saved offline' : 'Save offline'}
               </div>
             ` : ''}
           </div>
@@ -523,8 +523,11 @@ async function openDetail(id) {
     `).join('')}
   ` : '';
 
-  const mainVideoUrl = episodes.length ? episodes[0].video_url : item.video_url;
+    const mainVideoUrl = episodes.length ? episodes[0].video_url : item.video_url;
+  const mainOfflineKey = episodes.length ? `episode-${episodes[0].id}` : `title-${item.id}`;
   const showDownload = isDirectFile(mainVideoUrl);
+  const offlineSaved = await listOfflineVideos();
+  const offlineKeys = new Set(offlineSaved.map(v => v.key));
 
   root.innerHTML = `
     <div class="modal-backdrop">
@@ -541,7 +544,7 @@ async function openDetail(id) {
           <div class="modal-row"><span class="label">Rating</span><span>${item.rating.toFixed(1)} / 10</span></div>
           <div class="modal-actions">
             <div class="btn btn-gold" id="modal-play">${episodes.length ? `Play S${episodes[0].season_number}E${episodes[0].episode_number}` : 'Play'}</div>
-            ${showDownload ? `<div class="btn btn-outline" id="modal-download">${downloadIcon()} Download</div>` : ''}
+                        ${showDownload ? `<div class="btn btn-outline" id="modal-download">${downloadIcon()} ${offlineKeys.has(mainOfflineKey) ? 'Saved offline' : 'Save offline'}</div>` : ''}
             <div class="btn btn-outline ${item.in_watchlist ? 'on' : ''}" id="modal-watch">
               ${item.in_watchlist ? 'In watchlist' : 'Add to watchlist'}
             </div>
@@ -559,19 +562,19 @@ async function openDetail(id) {
     if (episodes.length) openPlayer({ video_url: episodes[0].video_url, title: `${item.title} — S${episodes[0].season_number}E${episodes[0].episode_number}` });
     else openPlayer(item);
   };
-  const downloadBtn = document.getElementById('modal-download');
+   const downloadBtn = document.getElementById('modal-download');
   if (downloadBtn) {
-    downloadBtn.onclick = () => downloadVideo(mainVideoUrl, `${item.title}.mp4`);
+    downloadBtn.onclick = () => downloadForOffline(mainOfflineKey, mainVideoUrl, { title: item.title, poster_url: item.poster_url }, downloadBtn);
   }
   root.querySelectorAll('.episode-card-thumb').forEach(thumb => {
     thumb.addEventListener('click', () => {
       openPlayer({ video_url: thumb.dataset.video, title: thumb.dataset.title });
     });
   });
-  root.querySelectorAll('.episode-download-btn').forEach(btn => {
+    root.querySelectorAll('.episode-download-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      downloadVideo(btn.dataset.video, btn.dataset.filename);
+      downloadForOffline(btn.dataset.key, btn.dataset.video, { title: btn.dataset.title }, btn);
     });
   });
   const watchBtn = document.getElementById('modal-watch');
