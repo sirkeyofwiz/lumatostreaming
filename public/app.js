@@ -356,15 +356,115 @@ function downloadIcon() {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>`;
 }
 
-function downloadVideo(url, filename) {
+// ---------- Offline downloads (IndexedDB) ----------
+
+const OFFLINE_DB_NAME = 'lumatostreaming-offline';
+const OFFLINE_STORE = 'videos';
+
+function openOfflineDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(OFFLINE_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(OFFLINE_STORE)) {
+        db.createObjectStore(OFFLINE_STORE, { keyPath: 'key' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveOfflineVideo(key, blob, meta) {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readwrite');
+    tx.objectStore(OFFLINE_STORE).put({ key, blob, ...meta, savedAt: Date.now() });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getOfflineVideo(key) {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readonly');
+    const req = tx.objectStore(OFFLINE_STORE).get(key);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function deleteOfflineVideo(key) {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readwrite');
+    tx.objectStore(OFFLINE_STORE).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function listOfflineVideos() {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readonly');
+    const req = tx.objectStore(OFFLINE_STORE).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1024) return Math.round(mb) + ' MB';
+  return (mb / 1024).toFixed(2) + ' GB';
+}
+
+async function downloadForOffline(key, url, meta, buttonEl) {
   if (!url) { showToast('No video linked yet.'); return; }
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || 'video.mp4';
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  const existing = await getOfflineVideo(key).catch(() => null);
+  if (existing) { showToast('Already saved offline.'); return; }
+
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
+
+  const originalText = buttonEl ? buttonEl.innerHTML : '';
+  if (buttonEl) buttonEl.textContent = 'Downloading... 0%';
+  try {
+    const res = await fetch(url);
+    if (!res.ok || !res.body) throw new Error('Download failed');
+    const total = Number(res.headers.get('Content-Length')) || 0;
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (buttonEl && total) buttonEl.textContent = `Downloading... ${Math.round((received / total) * 100)}%`;
+    }
+    const blob = new Blob(chunks, { type: res.headers.get('Content-Type') || 'video/mp4' });
+    await saveOfflineVideo(key, blob, meta);
+    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Saved offline`;
+    showToast('Saved for offline viewing');
+  } catch (err) {
+    if (buttonEl) buttonEl.innerHTML = originalText;
+    showToast('Download failed — try again.');
+  }
+}
+
+function isDirectFile(url) {
+  if (!url) return false;
+  const embed = getVideoEmbed(url);
+  return embed && embed.type === 'video';
+}
+
+function downloadIcon() {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>`;
 }
 
 async function openDetail(id) {
