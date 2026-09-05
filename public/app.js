@@ -36,7 +36,30 @@ function getVideoEmbed(url) {
   return { type: 'video', src: url };
 }
 
-function openPlayer(item) {
+async function openPlayer(item) {
+  if (item.offlineKey) {
+    const offline = await getOfflineVideo(item.offlineKey).catch(() => null);
+    if (offline) {
+      const objectUrl = URL.createObjectURL(offline.blob);
+      const root = document.getElementById('modal-root');
+      root.innerHTML = `
+        <div class="modal-backdrop">
+          <div class="modal" style="max-width:900px; width:100%; background:#000; padding:0;">
+            <div style="position:relative; width:100%; aspect-ratio:16/9;">
+              <div class="modal-close" id="player-close" style="z-index:5;">${closeIcon()}</div>
+              <video src="${objectUrl}" controls autoplay style="position:absolute; inset:0; width:100%; height:100%; background:#000;"></video>
+            </div>
+          </div>
+        </div>
+      `;
+      root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
+      });
+      document.getElementById('player-close').onclick = () => { root.innerHTML = ''; URL.revokeObjectURL(objectUrl); };
+      return;
+    }
+  }
+
   const embed = getVideoEmbed(item.video_url);
   if (!embed) {
     showToast('No video linked for this title yet.');
