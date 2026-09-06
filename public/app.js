@@ -497,8 +497,10 @@ async function openDetail(id) {
     ? `<span class="tag">${item.seasons} season${item.seasons > 1 ? 's' : ''}</span><span class="tag">${item.genre}</span><span class="tag">${item.year}</span>`
     : `<span class="tag">${item.runtime}</span><span class="tag">${item.genre}</span><span class="tag">${item.year}</span>`;
 
-  const episodes = item.type === 'series' ? await api(`/titles/${id}/episodes`) : [];
+    const episodes = item.type === 'series' ? await api(`/titles/${id}/episodes`) : [];
   const seasons = [...new Set(episodes.map(e => e.season_number))];
+  const offlineSaved = await listOfflineVideos();
+  const offlineKeys = new Set(offlineSaved.map(v => v.key));
 
   const episodesHtml = episodes.length ? `
     <div class="modal-row" style="margin-top:20px; margin-bottom:8px;"><span class="label">Episodes</span></div>
@@ -523,11 +525,9 @@ async function openDetail(id) {
     `).join('')}
   ` : '';
 
-    const mainVideoUrl = episodes.length ? episodes[0].video_url : item.video_url;
+      const mainVideoUrl = episodes.length ? episodes[0].video_url : item.video_url;
   const mainOfflineKey = episodes.length ? `episode-${episodes[0].id}` : `title-${item.id}`;
   const showDownload = isDirectFile(mainVideoUrl);
-  const offlineSaved = await listOfflineVideos();
-  const offlineKeys = new Set(offlineSaved.map(v => v.key));
 
   root.innerHTML = `
     <div class="modal-backdrop">
