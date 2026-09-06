@@ -100,6 +100,7 @@ function userIcon() {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.5-7 8-7s8 3 8 7"/></svg>`;
 }
 
+const activeDownloads = new Map(); // key -> { title, progress, status }
 let state = {
   route: 'home',
   genre: '',
@@ -449,10 +450,53 @@ async function downloadForOffline(key, url, meta, buttonEl) {
   if (!url) { showToast('No video linked yet.'); return; }
   const existing = await getOfflineVideo(key).catch(() => null);
   if (existing) { showToast('Already saved offline.'); return; }
+  if (activeDownloads.has(key)) { showToast('Already downloading — check the Downloads page.'); return; }
 
   if (navigator.storage && navigator.storage.persist) {
     navigator.storage.persist().catch(() => {});
   }
+
+  activeDownloads.set(key, { title: meta.title, progress: 0 });
+  showToast('Download started — check the Downloads page for progress.');
+  if (buttonEl) buttonEl.textContent = 'Downloading...';
+  if (state.route === 'downloads') renderDownloadsPage();
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok || !res.body) throw new Error('Download failed');
+    const total = Number(res.headers.get('Content-Length')) || 0;
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      const pct = total ? Math.round((received / total) * 100) : 0;
+      activeDownloads.set(key, { title: meta.title, progress: pct });
+      updateDownloadProgressBar(key, pct);
+    }
+    const blob = new Blob(chunks, { type: res.headers.get('Content-Type') || 'video/mp4' });
+    await saveOfflineVideo(key, blob, meta);
+    activeDownloads.delete(key);
+    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Saved offline`;
+    showToast('Saved for offline viewing');
+    if (state.route === 'downloads') renderDownloadsPage();
+  } catch (err) {
+    activeDownloads.delete(key);
+    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Save offline`;
+    showToast('Download failed — try again.');
+    if (state.route === 'downloads') renderDownloadsPage();
+  }
+}
+
+function updateDownloadProgressBar(key, pct) {
+  const bar = document.querySelector(`.download-progress-fill[data-key="${key}"]`);
+  if (bar) bar.style.width = pct + '%';
+  const label = document.querySelector(`.download-progress-label[data-key="${key}"]`);
+  if (label) label.textContent = pct + '%';
+}
 
   const originalText = buttonEl ? buttonEl.innerHTML : '';
   if (buttonEl) buttonEl.textContent = 'Downloading... 0%';
@@ -652,30 +696,48 @@ async function renderFilterBar() {
   });
 }
 
-async function render() {
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === state.route));
-  const content = document.getElementById('content');
+async function renderDownloadsPage() {
   const heroSlot = document.getElementById('hero-slot');
   const filterBar = document.getElementById('filter-bar');
+  const content = document.getElementById('content');
+  heroSlot.innerHTML = '';
+  filterBar.hidden = true;
 
-  if (state.route !== 'home') clearInterval(heroTimer);
+  const saved = await listOfflineVideos();
+  const inProgress = [...activeDownloads.entries()];
 
-    if (state.route === 'downloads') {
-    heroSlot.innerHTML = '';
-    filterBar.hidden = true;
-    const saved = await listOfflineVideos();
-    if (!saved.length) {
-      content.innerHTML = `
-        <div class="section">
-          <div class="section-head"><div class="section-title">Downloads</div></div>
-          <div class="empty-state">Nothing saved for offline viewing yet. Open any title with a video and tap "Save offline."</div>
-        </div>
-      `;
-      return;
-    }
+  if (!saved.length && !inProgress.length) {
     content.innerHTML = `
       <div class="section">
         <div class="section-head"><div class="section-title">Downloads</div></div>
+        <div class="empty-state">Nothing saved for offline viewing yet. Open any title with a video and tap "Save offline."</div>
+      </div>
+    `;
+    return;
+  }
+
+  const progressHtml = inProgress.length ? `
+    <div class="section-head"><div class="section-title">Downloading</div></div>
+    <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:24px;">
+      ${inProgress.map(([key, d]) => `
+        <div class="download-row">
+          <div style="min-width:0; flex:1;">
+            <div style="font-weight:600; font-size:14px; margin-bottom:8px;">${d.title}</div>
+            <div class="download-progress-track">
+              <div class="download-progress-fill" data-key="${key}" style="width:${d.progress}%;"></div>
+            </div>
+          </div>
+          <div class="download-progress-label" data-key="${key}" style="font-size:12px; color:var(--text-dim); flex-shrink:0;">${d.progress}%</div>
+        </div>
+      `).join('')}
+    </div>
+  ` : '';
+
+  content.innerHTML = `
+    <div class="section">
+      ${progressHtml}
+      ${saved.length ? `
+        <div class="section-head"><div class="section-title">Saved</div></div>
         <div style="display:flex; flex-direction:column; gap:10px;">
           ${saved.sort((a, b) => b.savedAt - a.savedAt).map(v => `
             <div class="download-row" data-key="${v.key}">
@@ -690,23 +752,35 @@ async function render() {
             </div>
           `).join('')}
         </div>
-      </div>
-    `;
-    content.querySelectorAll('.download-play-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const row = btn.closest('.download-row');
-        const video = saved.find(v => v.key === row.dataset.key);
-        openPlayer({ offlineKey: video.key });
-      });
+      ` : ''}
+    </div>
+  `;
+  content.querySelectorAll('.download-play-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.download-row');
+      const video = saved.find(v => v.key === row.dataset.key);
+      openPlayer({ offlineKey: video.key });
     });
-    content.querySelectorAll('.download-remove-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const row = btn.closest('.download-row');
-        await deleteOfflineVideo(row.dataset.key);
-        showToast('Removed from downloads');
-        render();
-      });
+  });
+  content.querySelectorAll('.download-remove-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('.download-row');
+      await deleteOfflineVideo(row.dataset.key);
+      showToast('Removed from downloads');
+      renderDownloadsPage();
     });
+  });
+}
+async function render() {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === state.route));
+  const content = document.getElementById('content');
+  const heroSlot = document.getElementById('hero-slot');
+  const filterBar = document.getElementById('filter-bar');
+
+  if (state.route !== 'home') clearInterval(heroTimer);
+
+      if (state.route === 'downloads') {
+    await renderDownloadsPage();
     return;
   }
   
