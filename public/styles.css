@@ -53,6 +53,7 @@ a.nav-item{text-decoration:none; cursor:pointer;}
 /* ---------- Main ---------- */
 main{flex:1; min-width:0; padding:22px 32px 60px;}
 .topbar{display:flex; align-items:center; gap:20px; margin-bottom:24px;}
+.topbar-logo{display:none;}
 .search{flex:1; max-width:520px; display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; color:var(--text-dim); font-size:14px;}
 .search svg{width:16px; height:16px; flex-shrink:0;}
 .search input{flex:1; background:transparent; border:none; outline:none; color:var(--text); font-size:14px; font-family:inherit;}
@@ -161,8 +162,11 @@ main{flex:1; min-width:0; padding:22px 32px 60px;}
   main{padding:14px 14px 68px;}
   .hero-title{font-size:34px;}
   .hero{height:230px;}
-  .topbar{gap:10px; flex-wrap:wrap;}
-  .search{max-width:none; order:1; flex:1 1 100%;}
+    .topbar{gap:10px; flex-wrap:wrap; align-items:center;}
+  .topbar-logo{display:flex; align-items:center; gap:6px; flex-shrink:0;}
+  .topbar-logo .logo-text{font-size:14px;}
+  .topbar-logo .logo-img{width:24px; height:24px;}
+  .search{order:1; flex:1 1 auto; min-width:120px; max-width:none;}
   .topbar-actions{order:2; margin-left:0;}
   .filter-bar{gap:6px;}
   .row{grid-auto-columns:128px; gap:10px;}
