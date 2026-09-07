@@ -491,15 +491,21 @@ async function downloadForOffline(key, url, meta, buttonEl) {
   }
 }
 
-function updateDownloadProgressBar(key, pct) {
-  const bar = document.querySelector(`.download-progress-fill[data-key="${key}"]`);
-  if (bar) bar.style.width = pct + '%';
-  const label = document.querySelector(`.download-progress-label[data-key="${key}"]`);
-  if (label) label.textContent = pct + '%';
-}
+async function downloadForOffline(key, url, meta, buttonEl) {
+  if (!url) { showToast('No video linked yet.'); return; }
+  const existing = await getOfflineVideo(key).catch(() => null);
+  if (existing) { showToast('Already saved offline.'); return; }
+  if (activeDownloads.has(key)) { showToast('Already downloading — check the Downloads page.'); return; }
 
-  const originalText = buttonEl ? buttonEl.innerHTML : '';
-  if (buttonEl) buttonEl.textContent = 'Downloading... 0%';
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
+
+  activeDownloads.set(key, { title: meta.title, progress: 0 });
+  showToast('Download started — check the Downloads page for progress.');
+  if (buttonEl) buttonEl.textContent = 'Downloading...';
+  if (state.route === 'downloads') renderDownloadsPage();
+
   try {
     const res = await fetch(url);
     if (!res.ok || !res.body) throw new Error('Download failed');
@@ -512,16 +518,29 @@ function updateDownloadProgressBar(key, pct) {
       if (done) break;
       chunks.push(value);
       received += value.length;
-      if (buttonEl && total) buttonEl.textContent = `Downloading... ${Math.round((received / total) * 100)}%`;
+      const pct = total ? Math.round((received / total) * 100) : 0;
+      activeDownloads.set(key, { title: meta.title, progress: pct });
+      updateDownloadProgressBar(key, pct);
     }
     const blob = new Blob(chunks, { type: res.headers.get('Content-Type') || 'video/mp4' });
     await saveOfflineVideo(key, blob, meta);
+    activeDownloads.delete(key);
     if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Saved offline`;
     showToast('Saved for offline viewing');
+    if (state.route === 'downloads') renderDownloadsPage();
   } catch (err) {
-    if (buttonEl) buttonEl.innerHTML = originalText;
+    activeDownloads.delete(key);
+    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Save offline`;
     showToast('Download failed — try again.');
+    if (state.route === 'downloads') renderDownloadsPage();
   }
+}
+
+function updateDownloadProgressBar(key, pct) {
+  const bar = document.querySelector(`.download-progress-fill[data-key="${key}"]`);
+  if (bar) bar.style.width = pct + '%';
+  const label = document.querySelector(`.download-progress-label[data-key="${key}"]`);
+  if (label) label.textContent = pct + '%';
 }
 
 function isDirectFile(url) {
