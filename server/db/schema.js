@@ -32,7 +32,7 @@ const sqliteSchema = `
     UNIQUE(user_id, title_id)
   );
 
-  CREATE TABLE IF NOT EXISTS episodes (
+    CREATE TABLE IF NOT EXISTS episodes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
     season_number INTEGER NOT NULL DEFAULT 1,
@@ -41,6 +41,16 @@ const sqliteSchema = `
     description TEXT,
     video_url TEXT,
     UNIQUE(title_id, season_number, episode_number)
+  );
+
+  CREATE TABLE IF NOT EXISTS subtitles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title_id INTEGER REFERENCES titles(id) ON DELETE CASCADE,
+    episode_id INTEGER REFERENCES episodes(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    lang_code TEXT NOT NULL,
+    vtt_content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `;
 
@@ -78,7 +88,7 @@ const pgSchema = `
     UNIQUE(user_id, title_id)
   );
 
-  CREATE TABLE IF NOT EXISTS episodes (
+    CREATE TABLE IF NOT EXISTS episodes (
     id SERIAL PRIMARY KEY,
     title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
     season_number INTEGER NOT NULL DEFAULT 1,
@@ -87,6 +97,16 @@ const pgSchema = `
     description TEXT,
     video_url TEXT,
     UNIQUE(title_id, season_number, episode_number)
+  );
+
+  CREATE TABLE IF NOT EXISTS subtitles (
+    id SERIAL PRIMARY KEY,
+    title_id INTEGER REFERENCES titles(id) ON DELETE CASCADE,
+    episode_id INTEGER REFERENCES episodes(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    lang_code TEXT NOT NULL,
+    vtt_content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
 `;
 
