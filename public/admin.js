@@ -1,5 +1,60 @@
 const API = '/api';
+function srtToVtt(srtText) {
+  let vtt = srtText.replace(/\r+/g, '');
+  vtt = vtt.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+  return 'WEBVTT\n\n' + vtt.trim() + '\n';
+}
 
+function renderSubtitleList(subtitles) {
+  if (!subtitles || !subtitles.length) return `<div style="font-size:12px; color:var(--text-dim);">No subtitles added yet.</div>`;
+  return subtitles.map(s => `
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; background:var(--surface-2); border-radius:6px; margin-bottom:6px;">
+      <span style="font-size:12.5px;">${s.label} (${s.lang_code})</span>
+      <span class="subtitle-remove-btn" data-id="${s.id}" style="color:var(--red); font-size:11.5px; cursor:pointer;">Remove</span>
+    </div>
+  `).join('');
+}
+
+function wireSubtitleUpload(fileInputId, statusId, listId, endpoint, currentList) {
+  document.getElementById(fileInputId).addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const label = prompt('Label for this subtitle (e.g. "English"):');
+    if (!label) return;
+    const langCode = prompt('Language code (e.g. "en", "zh", "ko"):', 'en');
+    if (!langCode) return;
+    const statusEl = document.getElementById(statusId);
+    statusEl.textContent = 'Uploading...';
+    try {
+      const text = await file.text();
+      const vtt = file.name.toLowerCase().endsWith('.vtt') ? text : srtToVtt(text);
+      const created = await api(endpoint, {
+        method: 'POST',
+        body: JSON.stringify({ label, lang_code: langCode, vtt_content: vtt }),
+      });
+      currentList.push(created);
+      document.getElementById(listId).innerHTML = renderSubtitleList(currentList);
+      wireSubtitleRemoveButtons(listId, currentList);
+      statusEl.textContent = 'Added.';
+      e.target.value = '';
+    } catch (err) {
+      statusEl.textContent = err.message;
+    }
+  });
+}
+
+function wireSubtitleRemoveButtons(listId, currentList) {
+  document.querySelectorAll(`#${listId} .subtitle-remove-btn`).forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm('Remove this subtitle?')) return;
+      await api(`/admin/subtitles/${btn.dataset.id}`, { method: 'DELETE' });
+      const idx = currentList.findIndex(s => String(s.id) === btn.dataset.id);
+      if (idx > -1) currentList.splice(idx, 1);
+      document.getElementById(listId).innerHTML = renderSubtitleList(currentList);
+      wireSubtitleRemoveButtons(listId, currentList);
+    };
+  });
+}
 async function api(path, opts) {
   const res = await fetch(API + path, {
     headers: { 'Content-Type': 'application/json' },
