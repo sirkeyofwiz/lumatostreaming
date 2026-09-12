@@ -305,7 +305,8 @@ app.get('/api/titles/:id', ah(async (req, res) => {
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Title not found.' });
   const [withFlag] = await withWatchlistFlag([row], req.session.user && req.session.user.id);
-  res.json(withFlag);
+  const subtitles = await db.all('SELECT id, label, lang_code FROM subtitles WHERE title_id = ?', [req.params.id]);
+  res.json({ ...withFlag, subtitles });
 }));
 
 // Public — anyone viewing a series can see its episode list.
@@ -314,7 +315,11 @@ app.get('/api/titles/:id/episodes', ah(async (req, res) => {
     'SELECT * FROM episodes WHERE title_id = ? ORDER BY season_number ASC, episode_number ASC',
     [req.params.id]
   );
-  res.json(rows);
+  const withSubs = await Promise.all(rows.map(async (ep) => {
+    const subtitles = await db.all('SELECT id, label, lang_code FROM subtitles WHERE episode_id = ?', [ep.id]);
+    return { ...ep, subtitles };
+  }));
+  res.json(withSubs);
 }));
 
 // ---------- Episode management (admin only) ----------
@@ -387,6 +392,42 @@ app.post('/api/admin/titles/:id/episodes/import-tmdb', requireAdmin, ah(async (r
     [req.params.id]
   );
   res.json({ imported, skipped: episodes.length - imported, episodes: rows });
+}));
+
+app.post('/api/admin/titles/:id/subtitles', requireAdmin, ah(async (req, res) => {
+  const { label, lang_code, vtt_content } = req.body || {};
+  if (!label || !lang_code || !vtt_content) {
+    return res.status(400).json({ error: 'label, lang_code, and vtt_content are required.' });
+  }
+  const result = await db.run(
+    'INSERT INTO subtitles (title_id, label, lang_code, vtt_content) VALUES (?, ?, ?, ?) RETURNING id',
+    [req.params.id, label, lang_code, vtt_content]
+  );
+  res.status(201).json({ id: result.lastID, label, lang_code });
+}));
+
+app.post('/api/admin/episodes/:id/subtitles', requireAdmin, ah(async (req, res) => {
+  const { label, lang_code, vtt_content } = req.body || {};
+  if (!label || !lang_code || !vtt_content) {
+    return res.status(400).json({ error: 'label, lang_code, and vtt_content are required.' });
+  }
+  const result = await db.run(
+    'INSERT INTO subtitles (episode_id, label, lang_code, vtt_content) VALUES (?, ?, ?, ?) RETURNING id',
+    [req.params.id, label, lang_code, vtt_content]
+  );
+  res.status(201).json({ id: result.lastID, label, lang_code });
+}));
+
+app.get('/api/subtitles/:id', ah(async (req, res) => {
+  const row = await db.get('SELECT vtt_content FROM subtitles WHERE id = ?', [req.params.id]);
+  if (!row) return res.status(404).send('Not found');
+  res.set('Content-Type', 'text/vtt; charset=utf-8');
+  res.send(row.vtt_content);
+}));
+
+app.delete('/api/admin/subtitles/:id', requireAdmin, ah(async (req, res) => {
+  await db.run('DELETE FROM subtitles WHERE id = ?', [req.params.id]);
+  res.json({ ok: true });
 }));
 
 // ---------- Watchlist (per signed-in user) ----------
