@@ -232,6 +232,14 @@ function openForm(existing, prefill) {
               <input type="hidden" name="poster_url" id="poster-url-hidden" value="${posterUrl || ''}" />
             </div>
             <input type="hidden" name="tmdb_id" value="${t.tmdb_id || t.tmdbId || ''}" />
+             <div>
+              <label>Subtitles</label>
+              <div id="title-subtitle-list">${renderSubtitleList(t.subtitles)}</div>
+              ${existing ? `
+                <input type="file" id="title-subtitle-file" accept=".srt,.vtt" style="margin-top:6px;" />
+                <div id="title-subtitle-status" style="font-size:11.5px; color:var(--text-dim); margin-top:4px;"></div>
+              ` : `<div style="font-size:11.5px; color:var(--text-dim);">Save the title first, then edit it again to add subtitles.</div>`}
+            </div>
             <div>
               <label>Backdrop image URL (used for the homepage hero — wide image, different from the poster above)</label>
               <input name="backdrop_url" value="${backdropUrl || ''}" placeholder="https://..." />
@@ -262,6 +270,11 @@ function openForm(existing, prefill) {
     if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
   });
   document.getElementById('form-close').onclick = () => root.innerHTML = '';
+    if (existing) {
+    const subList = existing.subtitles || [];
+    wireSubtitleUpload('title-subtitle-file', 'title-subtitle-status', 'title-subtitle-list', `/admin/titles/${existing.id}/subtitles`, subList);
+    wireSubtitleRemoveButtons('title-subtitle-list', subList);
+  }
 
   document.getElementById('poster-file-input').addEventListener('change', async (e) => {
     const file = e.target.files[0];
