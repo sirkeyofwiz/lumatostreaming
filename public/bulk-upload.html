@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bulk Upload — LumatoStreaming Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="admin.css">
+<link rel="icon" href="/icons/icon-32.png">
+<style>
+  .bulk-table{width:100%; border-collapse:collapse; font-size:13px; margin-top:16px;}
+  .bulk-table th{text-align:left; color:var(--text-dim); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.4px; padding:8px 10px; border-bottom:1px solid var(--border);}
+  .bulk-table td{padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:middle;}
+  .bulk-table input[type="number"]{width:60px; background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:6px 8px; color:var(--text); font-size:13px;}
+  .bulk-filename{max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:var(--text-dim);}
+  .bulk-match{font-size:11.5px; padding:3px 8px; border-radius:12px; display:inline-block;}
+  .bulk-match.update{background:var(--teal-dim); color:var(--teal);}
+  .bulk-match.create{background:var(--surface-2); color:var(--text-dim);}
+  .bulk-progress-track{width:100px; height:6px; background:var(--surface-2); border-radius:3px; overflow:hidden;}
+  .bulk-progress-fill{height:100%; background:var(--gold); width:0%; transition:width .2s ease;}
+  .bulk-status{font-size:11.5px; color:var(--text-dim);}
+  .bulk-status.done{color:var(--teal);}
+  .bulk-status.error{color:var(--red);}
+</style>
+</head>
+<body class="admin-body">
+
+<div class="admin-wrap">
+  <div class="admin-topbar">
+    <div class="logo">
+      <img src="/icons/logo-mark.png" class="logo-img" alt="LumatoStreaming" />
+      <div class="logo-text">LUMATO<span class="logo-accent">STREAMING</span></div>
+      <span class="tag" style="color:#241706;background:var(--gold); margin-left:8px;">ADMIN</span>
+    </div>
+    <div class="admin-topbar-actions">
+      <a href="/admin.html" class="btn btn-outline">Back to admin</a>
+    </div>
+  </div>
+
+  <div id="gate" class="empty-state">Checking access...</div>
+
+  <div id="content" hidden>
+    <div class="admin-head">
+      <h1>Bulk upload episodes</h1>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <label style="display:block; font-size:12px; color:var(--text-dim); margin-bottom:6px;">Series</label>
+      <select id="series-select" style="width:100%; max-width:420px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; color:var(--text); font-size:14px;">
+        <option value="">Choose a series...</option>
+      </select>
+    </div>
+
+    <div id="upload-section" hidden>
+      <label style="display:block; font-size:12px; color:var(--text-dim); margin-bottom:6px;">
+        Select video files (hold Ctrl or Shift to select multiple)
+      </label>
+      <input type="file" id="file-input" accept="video/*" multiple style="margin-bottom:16px;" />
+
+      <div id="table-wrap" hidden>
+        <p style="font-size:12.5px; color:var(--text-dim); margin-bottom:8px;">
+          Season/episode numbers are guessed from filenames — check them and fix anything that looks wrong before uploading.
+        </p>
+        <div class="admin-table-wrap">
+          <table class="bulk-table">
+            <thead>
+              <tr><th>File</th><th>Season</th><th>Episode</th><th>Match</th><th>Progress</th><th>Status</th></tr>
+            </thead>
+            <tbody id="bulk-rows"></tbody>
+          </table>
+        </div>
+        <div class="btn btn-gold" id="upload-all-btn" style="margin-top:16px; display:inline-flex;">Upload all</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const API = '/api';
+
+async function api(path, opts) {
+  const res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const data = res.status === 204 ? null : await res.json();
+  if (!res.ok) throw new Error((data && data.error) || `Request failed: ${res.status}`);
+  return data;
+}
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+function parseEpisodeInfo(filename) {
+  const name = filename.replace(/\.[^/.]+$/, '');
+  let m;
+  if (m = name.match(/S(\d{1,2})E(\d{1,3})/i)) return { season: +m[1], episode: +m[2] };
+  if (m = name.match(/(\d{1,2})x(\d{1,3})/i)) return { season: +m[1], episode: +m[2] };
+  if (m = name.match(/season\s*(\d{1,2}).*?ep(?:isode)?\.?\s*(\d{1,3})/i)) return { season: +m[1], episode: +m[2] };
+  if (m = name.match(/第\s*(\d{1,4})\s*[话集]/)) return { season: 1, episode: +m[1] };
+  if (m = name.match(/\bep(?:isode)?\.?\s*(\d{1,3})\b/i)) return { season: 1, episode: +m[1] };
+  if (m = name.match(/[\s\-_](\d{1,3})[\s\-_]*$/)) return { season: 1, episode: +m[1] };
+  return null;
+}
+
+async function uploadFileToR2(file, onProgress) {
+  const presign = await api('/admin/uploads/presign', {
+    method: 'POST',
+    body: JSON.stringify({ filename: file.name, contentType: file.type, kind: 'video' }),
+  });
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', presign.uploadUrl);
+    xhr.setRequestHeader('Content-Type', file.type);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100)); };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload failed (${xhr.status})`));
+    xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+    xhr.send(file);
+  });
+  return presign.publicUrl;
+}
+
+let selectedSeries = null;
+let existingEpisodes = [];
+let rows = [];
+
+async function init() {
+  const gate = document.getElementById('gate');
+  let user;
+  try { user = await api('/auth/me'); } catch (e) { user = null; }
+  if (!user || !user.is_admin) {
+    gate.textContent = 'You need an admin account to view this page. Sign in from the main site, then come back here.';
+    return;
+  }
+  gate.hidden = true;
+  document.getElementById('content').hidden = false;
+
+  const titles = await api('/admin/titles');
+  const series = titles.filter(t => t.type === 'series');
+  const select = document.getElementById('series-select');
+  series.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.title;
+    select.appendChild(opt);
+  });
+
+  select.addEventListener('change', async () => {
+    if (!select.value) { document.getElementById('upload-section').hidden = true; return; }
+    selectedSeries = series.find(s => String(s.id) === select.value);
+    existingEpisodes = await api(`/titles/${selectedSeries.id}/episodes`);
+    document.getElementById('upload-section').hidden = false;
+    document.getElementById('table-wrap').hidden = true;
+    document.getElementById('file-input').value = '';
+  });
+
+  document.getElementById('file-input').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    rows = files.map(file => {
+      const guess = parseEpisodeInfo(file.name);
+      return { file, season: guess ? guess.season : 1, episode: guess ? guess.episode : '', progress: 0, status: '' };
+    });
+    renderRows();
+    document.getElementById('table-wrap').hidden = false;
+  });
+
+  document.getElementById('upload-all-btn').addEventListener('click', uploadAll);
+}
+
+function matchInfo(row) {
+  if (!row.episode) return { label: 'Set episode #', cls: 'create' };
+  const existing = existingEpisodes.find(e => e.season_number === Number(row.season) && e.episode_number === Number(row.episode));
+  return existing
+    ? { label: `Update S${row.season}E${row.episode} — ${existing.name}`, cls: 'update' }
+    : { label: `Create new S${row.season}E${row.episode}`, cls: 'create' };
+}
+
+function renderRows() {
+  const tbody = document.getElementById('bulk-rows');
+  tbody.innerHTML = rows.map((row, i) => {
+    const match = matchInfo(row);
+    return `
+      <tr data-i="${i}">
+        <td class="bulk-filename" title="${row.file.name}">${row.file.name}</td>
+        <td><input type="number" min="1" class="season-input" value="${row.season}" /></td>
+        <td><input type="number" min="1" class="episode-input" value="${row.episode}" /></td>
+        <td><span class="bulk-match ${match.cls}" data-match>${match.label}</span></td>
+        <td><div class="bulk-progress-track"><div class="bulk-progress-fill" data-progress style="width:${row.progress}%;"></div></div></td>
+        <td class="bulk-status" data-status>${row.status}</td>
+      </tr>
+    `;
+  }).join('');
+
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const i = Number(tr.dataset.i);
+    tr.querySelector('.season-input').addEventListener('input', (e) => {
+      rows[i].season = Number(e.target.value) || 1;
+      tr.querySelector('[data-match]').outerHTML = `<span class="bulk-match ${matchInfo(rows[i]).cls}" data-match>${matchInfo(rows[i]).label}</span>`;
+    });
+    tr.querySelector('.episode-input').addEventListener('input', (e) => {
+      rows[i].episode = e.target.value ? Number(e.target.value) : '';
+      tr.querySelector('[data-match]').outerHTML = `<span class="bulk-match ${matchInfo(rows[i]).cls}" data-match>${matchInfo(rows[i]).label}</span>`;
+    });
+  });
+}
+
+async function uploadAll() {
+  const missing = rows.filter(r => !r.episode);
+  if (missing.length) {
+    showToast(`${missing.length} file(s) still need an episode number filled in.`);
+    return;
+  }
+  document.getElementById('upload-all-btn').textContent = 'Uploading...';
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const tr = document.querySelector(`tr[data-i="${i}"]`);
+    const progressEl = tr.querySelector('[data-progress]');
+    const statusEl = tr.querySelector('[data-status]');
+    statusEl.textContent = 'Uploading...';
+    statusEl.className = 'bulk-status';
+    try {
+      const url = await uploadFileToR2(row.file, (pct) => { progressEl.style.width = pct + '%'; });
+      const existing = existingEpisodes.find(e => e.season_number === Number(row.season) && e.episode_number === Number(row.episode));
+      if (existing) {
+        await api(`/admin/episodes/${existing.id}`, { method: 'PUT', body: JSON.stringify({ video_url: url }) });
+      } else {
+        const created = await api(`/admin/titles/${selectedSeries.id}/episodes`, {
+          method: 'POST',
+          body: JSON.stringify({ season_number: row.season, episode_number: row.episode, name: `Episode ${row.episode}`, video_url: url }),
+        });
+        existingEpisodes.push(created);
+      }
+      statusEl.textContent = 'Done';
+      statusEl.className = 'bulk-status done';
+    } catch (err) {
+      statusEl.textContent = err.message;
+      statusEl.className = 'bulk-status error';
+    }
+  }
+  document.getElementById('upload-all-btn').textContent = 'Upload all';
+  showToast('Bulk upload finished — check the status column for any errors.');
+}
+
+init();
+</script>
+
+</body>
+</html>
