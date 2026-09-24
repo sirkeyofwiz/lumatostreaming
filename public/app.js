@@ -30,8 +30,7 @@ function heroBackground(item) {
 function buildSubtitleTracks(subtitles) {
   if (!subtitles || !subtitles.length) return '';
   return subtitles.map((s, i) => {
-    const dataUri = `data:text/vtt;charset=utf-8,${encodeURIComponent(s.vtt_content || '')}`;
-    return `<track kind="subtitles" src="${dataUri}" srclang="${s.lang_code}" label="${s.label}" ${i === 0 ? 'default' : ''}></track>`;
+    return `<track kind="subtitles" src="/api/subtitles/${s.id}" srclang="${s.lang_code}" label="${s.label}" ${i === 0 ? 'default' : ''}></track>`;
   }).join('');
 }
 function getVideoEmbed(url) {
