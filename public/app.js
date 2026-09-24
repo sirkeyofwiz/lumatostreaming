@@ -27,6 +27,13 @@ function heroBackground(item) {
 // Figures out how to play a video_url: a YouTube/Vimeo link becomes an
 // iframe embed, anything else is treated as a direct video file URL and
 // played with a native <video> element.
+function buildSubtitleTracks(subtitles) {
+  if (!subtitles || !subtitles.length) return '';
+  return subtitles.map((s, i) => {
+    const dataUri = `data:text/vtt;charset=utf-8,${encodeURIComponent(s.vtt_content || '')}`;
+    return `<track kind="subtitles" src="${dataUri}" srclang="${s.lang_code}" label="${s.label}" ${i === 0 ? 'default' : ''}></track>`;
+  }).join('');
+}
 function getVideoEmbed(url) {
   if (!url) return null;
   const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([\w-]{6,})/);
@@ -47,7 +54,7 @@ async function openPlayer(item) {
           <div class="modal" style="max-width:900px; width:100%; background:#000; padding:0;">
             <div style="position:relative; width:100%; aspect-ratio:16/9;">
               <div class="modal-close" id="player-close" style="z-index:5;">${closeIcon()}</div>
-              <video src="${objectUrl}" controls autoplay style="position:absolute; inset:0; width:100%; height:100%; background:#000;"></video>
+              <video src="${objectUrl}" controls autoplay crossorigin="anonymous" style="position:absolute; inset:0; width:100%; height:100%; background:#000;">${buildSubtitleTracks(item.subtitles)}</video>
             </div>
           </div>
         </div>
@@ -68,7 +75,7 @@ async function openPlayer(item) {
   const root = document.getElementById('modal-root');
   const playerEl = embed.type === 'iframe'
     ? `<iframe src="${embed.src}" allow="autoplay; fullscreen" allowfullscreen style="position:absolute; inset:0; width:100%; height:100%; border:0;"></iframe>`
-    : `<video src="${embed.src}" controls autoplay style="position:absolute; inset:0; width:100%; height:100%; background:#000;"></video>`;
+    : `<video src="${embed.src}" controls autoplay crossorigin="anonymous" style="position:absolute; inset:0; width:100%; height:100%; background:#000;">${buildSubtitleTracks(item.subtitles)}</video>`;
   root.innerHTML = `
     <div class="modal-backdrop">
       <div class="modal" style="max-width:900px; width:100%; background:#000; padding:0;">
