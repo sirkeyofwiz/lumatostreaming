@@ -452,10 +452,17 @@ async function openEpisodeManager(title) {
     return episodes.length ? seasons.map(s => `
       <div style="font-size:11px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:.5px; margin:14px 0 6px;">Season ${s}</div>
       ${episodes.filter(e => e.season_number === s).sort((a, b) => a.episode_number - b.episode_number).map(e => `
-        <div style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:8px; border:1px solid var(--border); margin-bottom:6px;">
+                <div style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:8px; border:1px solid var(--border); margin-bottom:6px; flex-wrap:wrap;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600;">E${e.episode_number} · ${e.name}</div>
             <div style="font-size:11.5px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${e.video_url || 'No video linked'}</div>
+            <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+              ${(e.subtitles || []).map(s => `<span style="font-size:10.5px; background:var(--surface-2); padding:2px 8px; border-radius:10px;">${s.label} <span class="ep-sub-remove" data-sub-id="${s.id}" data-ep-id="${e.id}" style="color:var(--red); cursor:pointer; margin-left:4px;">×</span></span>`).join('')}
+              <label style="font-size:10.5px; color:var(--teal); cursor:pointer;">
+                + Subtitle
+                <input type="file" accept=".srt,.vtt" class="ep-sub-file" data-ep-id="${e.id}" style="display:none;" />
+              </label>
+            </div>
           </div>
           <div class="btn btn-outline" style="padding:6px 10px; font-size:11.5px;" data-edit-ep="${e.id}">Edit</div>
           <div class="btn btn-outline" style="padding:6px 10px; font-size:11.5px; color:var(--red); border-color:var(--red);" data-delete-ep="${e.id}">Delete</div>
@@ -560,6 +567,40 @@ async function openEpisodeManager(title) {
         if (newVideoUrl === null) return;
         api(`/admin/episodes/${ep.id}`, { method: 'PUT', body: JSON.stringify({ video_url: newVideoUrl }) })
           .then(updated => { ep.video_url = updated.video_url; paint(); showToast('Episode updated'); });
+      };
+    });
+        document.querySelectorAll('.ep-sub-file').forEach(input => {
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const epId = input.dataset.epId;
+        const label = prompt('Label for this subtitle (e.g. "English"):');
+        if (!label) return;
+        const langCode = prompt('Language code (e.g. "en", "zh", "ko"):', 'en');
+        if (!langCode) return;
+        try {
+          const text = await file.text();
+          const vtt = file.name.toLowerCase().endsWith('.vtt') ? text : srtToVtt(text);
+          const created = await api(`/admin/episodes/${epId}/subtitles`, {
+            method: 'POST',
+            body: JSON.stringify({ label, lang_code: langCode, vtt_content: vtt }),
+          });
+          const ep = episodes.find(e => e.id === Number(epId));
+          if (ep) { ep.subtitles = ep.subtitles || []; ep.subtitles.push(created); }
+          paint();
+          showToast('Subtitle added');
+        } catch (err) {
+          showToast(err.message);
+        }
+      };
+    });
+    document.querySelectorAll('.ep-sub-remove').forEach(el => {
+      el.onclick = async () => {
+        if (!confirm('Remove this subtitle?')) return;
+        await api(`/admin/subtitles/${el.dataset.subId}`, { method: 'DELETE' });
+        const ep = episodes.find(e => e.id === Number(el.dataset.epId));
+        if (ep && ep.subtitles) ep.subtitles = ep.subtitles.filter(s => String(s.id) !== el.dataset.subId);
+        paint();
       };
     });
 
