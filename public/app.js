@@ -866,6 +866,23 @@ async function render() {
     return;
   }
 
+   if (state.route === 'Movie zilizotafsiriwa') {
+    heroSlot.innerHTML = '';
+    filterBar.hidden = true;
+    const qs = new URLSearchParams();
+    qs.set('genre', 'Swahili');
+    if (state.query) qs.set('q', state.query);
+    const items = await api(`/titles?${qs.toString()}`);
+    content.innerHTML = `
+      <div class="section">
+        <div class="section-head"><div class="section-title">MOVIE ZILIZOTAFSIRIWA</div></div>
+        ${items.length ? `<div class="grid">${items.map(posterCard).join('')}</div>` : `<div class="empty-state">Hakuna filamu bado — no titles tagged Swahili yet.</div>`}
+      </div>
+    `;
+    attachCardHandlers(content);
+    return;
+  }
+  
   // movie / series listing routes
   heroSlot.innerHTML = '';
   await renderFilterBar();
