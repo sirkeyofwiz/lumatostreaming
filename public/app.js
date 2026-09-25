@@ -870,13 +870,13 @@ async function render() {
     heroSlot.innerHTML = '';
     filterBar.hidden = true;
     const qs = new URLSearchParams();
-    qs.set('genre', 'Swahili');
+    qs.set('genre', 'Movie zilizotafsiriwa');
     if (state.query) qs.set('q', state.query);
     const items = await api(`/titles?${qs.toString()}`);
     content.innerHTML = `
       <div class="section">
         <div class="section-head"><div class="section-title">MOVIE ZILIZOTAFSIRIWA</div></div>
-        ${items.length ? `<div class="grid">${items.map(posterCard).join('')}</div>` : `<div class="empty-state">Hakuna filamu bado — no titles tagged Swahili yet.</div>`}
+        ${items.length ? `<div class="grid">${items.map(posterCard).join('')}</div>` : `<div class="empty-state">Hakuna filamu bado — no titles tagged Movie zilizotafsiriwa yet.</div>`}
       </div>
     `;
     attachCardHandlers(content);
