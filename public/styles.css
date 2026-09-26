@@ -209,3 +209,6 @@ main{flex:1; min-width:0; padding:22px 32px 60px;}
   .poster{height:162px;}
   .card-title{font-size:12px;}
 }
+.poster{transition:transform .25s ease, box-shadow .25s ease;}
+.card:hover .poster{transform:scale(1.04); box-shadow:0 12px 28px rgba(0,0,0,.55), 0 0 0 1px var(--teal);}
+.card:hover .card-title{color:var(--teal);}
