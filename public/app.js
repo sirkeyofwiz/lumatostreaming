@@ -578,7 +578,7 @@ async function openDetail(id) {
       <div class="row">
         ${episodes.filter(e => e.season_number === s).map(e => `
           <div class="episode-card">
-            <div class="episode-card-thumb" data-video="${e.video_url || ''}" data-title="${item.title} — S${e.season_number}E${e.episode_number}">
+            <div class="episode-card-thumb" data-ep-id="${e.id}" data-video="${e.video_url || ''}" data-title="${item.title} — S${e.season_number}E${e.episode_number}">
               <div class="episode-card-num">E${e.episode_number}</div>
               <div class="episode-card-play">▶</div>
             </div>
@@ -628,7 +628,7 @@ async function openDetail(id) {
     if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
   });
   document.getElementById('modal-play').onclick = () => {
-    if (episodes.length) openPlayer({ video_url: episodes[0].video_url, title: `${item.title} — S${episodes[0].season_number}E${episodes[0].episode_number}` });
+    if (episodes.length) openPlayer({ video_url: episodes[0].video_url, title: `${item.title} — S${episodes[0].season_number}E${episodes[0].episode_number}`, subtitles: episodes[0].subtitles });
     else openPlayer(item);
   };
    const downloadBtn = document.getElementById('modal-download');
@@ -637,7 +637,8 @@ async function openDetail(id) {
   }
   root.querySelectorAll('.episode-card-thumb').forEach(thumb => {
     thumb.addEventListener('click', () => {
-      openPlayer({ video_url: thumb.dataset.video, title: thumb.dataset.title });
+      const ep = episodes.find(e => String(e.id) === thumb.dataset.epId);
+      openPlayer({ video_url: thumb.dataset.video, title: thumb.dataset.title, subtitles: ep && ep.subtitles });
     });
   });
     root.querySelectorAll('.episode-download-btn').forEach(btn => {
