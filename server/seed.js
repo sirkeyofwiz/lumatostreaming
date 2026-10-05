@@ -80,6 +80,17 @@ const titles = [
 async function run() {
   await db.ready();
 
+  // Seeding wipes every title, user, and watchlist (episodes and subtitles
+  // cascade with titles). Refuse to run against a database that already has
+  // data, unless explicitly forced — so a stray `npm run seed` can't erase
+  // the live catalog.
+  const existing = await db.get('SELECT (SELECT COUNT(*) FROM titles) AS titles, (SELECT COUNT(*) FROM users) AS users');
+  if ((Number(existing.titles) || Number(existing.users)) && process.env.SEED_FORCE !== 'true') {
+    console.error(`Refusing to seed: database already has ${existing.titles} titles and ${existing.users} users.`);
+    console.error('Seeding would delete all of them. Set SEED_FORCE=true to wipe and reseed anyway.');
+    process.exit(1);
+  }
+
   await db.exec('DELETE FROM watchlist');
   await db.exec('DELETE FROM titles');
   await db.exec('DELETE FROM users');
