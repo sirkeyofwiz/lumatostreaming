@@ -30,7 +30,7 @@ function heroBackground(item) {
 function buildSubtitleTracks(subtitles) {
   if (!subtitles || !subtitles.length) return '';
   return subtitles.map((s, i) => {
-    return `<track kind="subtitles" src="/api/subtitles/${s.id}" srclang="${s.lang_code}" label="${s.label}" ${i === 0 ? 'default' : ''}></track>`;
+    return `<track kind="subtitles" src="${s.src || `/api/subtitles/${s.id}`}" srclang="${s.lang_code}" label="${s.label}" ${i === 0 ? 'default' : ''}></track>`;
   }).join('');
 }
 function getVideoEmbed(url) {
@@ -47,21 +47,27 @@ async function openPlayer(item) {
     const offline = await getOfflineVideo(item.offlineKey).catch(() => null);
     if (offline) {
       const objectUrl = URL.createObjectURL(offline.blob);
+      // Subtitles saved alongside the video are served from blob URLs, so
+      // they play without a network connection.
+      const offlineSubs = (offline.subtitles || []).map(s => ({
+        ...s, src: URL.createObjectURL(new Blob([s.vtt], { type: 'text/vtt' })),
+      }));
+      const revokeAll = () => { URL.revokeObjectURL(objectUrl); offlineSubs.forEach(s => URL.revokeObjectURL(s.src)); };
       const root = document.getElementById('modal-root');
       root.innerHTML = `
         <div class="modal-backdrop">
           <div class="modal" style="max-width:900px; width:100%; background:#000; padding:0;">
             <div style="position:relative; width:100%; aspect-ratio:16/9;">
               <div class="modal-close" id="player-close" style="z-index:5;">${closeIcon()}</div>
-              <video src="${objectUrl}" controls autoplay crossorigin="anonymous" style="position:absolute; inset:0; width:100%; height:100%; background:#000;">${buildSubtitleTracks(item.subtitles)}</video>
+              <video src="${objectUrl}" controls autoplay crossorigin="anonymous" style="position:absolute; inset:0; width:100%; height:100%; background:#000;">${buildSubtitleTracks(offlineSubs)}</video>
             </div>
           </div>
         </div>
       `;
       root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
-        if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
+        if (e.target.classList.contains('modal-backdrop')) { root.innerHTML = ''; revokeAll(); }
       });
-      document.getElementById('player-close').onclick = () => { root.innerHTML = ''; URL.revokeObjectURL(objectUrl); };
+      document.getElementById('player-close').onclick = () => { root.innerHTML = ''; revokeAll(); };
       return;
     }
   }
@@ -484,52 +490,15 @@ async function downloadForOffline(key, url, meta, buttonEl) {
       updateDownloadProgressBar(key, pct);
     }
     const blob = new Blob(chunks, { type: res.headers.get('Content-Type') || 'video/mp4' });
-    await saveOfflineVideo(key, blob, meta);
-    activeDownloads.delete(key);
-    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Saved offline`;
-    showToast('Saved for offline viewing');
-    if (state.route === 'downloads') renderDownloadsPage();
-  } catch (err) {
-    activeDownloads.delete(key);
-    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Save offline`;
-    showToast('Download failed — try again.');
-    if (state.route === 'downloads') renderDownloadsPage();
-  }
-}
-
-async function downloadForOffline(key, url, meta, buttonEl) {
-  if (!url) { showToast('No video linked yet.'); return; }
-  const existing = await getOfflineVideo(key).catch(() => null);
-  if (existing) { showToast('Already saved offline.'); return; }
-  if (activeDownloads.has(key)) { showToast('Already downloading — check the Downloads page.'); return; }
-
-  if (navigator.storage && navigator.storage.persist) {
-    navigator.storage.persist().catch(() => {});
-  }
-
-  activeDownloads.set(key, { title: meta.title, progress: 0 });
-  showToast('Download started — check the Downloads page for progress.');
-  if (buttonEl) buttonEl.textContent = 'Downloading...';
-  if (state.route === 'downloads') renderDownloadsPage();
-
-  try {
-    const res = await fetch(url);
-    if (!res.ok || !res.body) throw new Error('Download failed');
-    const total = Number(res.headers.get('Content-Length')) || 0;
-    const reader = res.body.getReader();
-    const chunks = [];
-    let received = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      const pct = total ? Math.round((received / total) * 100) : 0;
-      activeDownloads.set(key, { title: meta.title, progress: pct });
-      updateDownloadProgressBar(key, pct);
-    }
-    const blob = new Blob(chunks, { type: res.headers.get('Content-Type') || 'video/mp4' });
-    await saveOfflineVideo(key, blob, meta);
+    // Store each subtitle's text with the video so it can play offline.
+    // A subtitle that fails to fetch is skipped rather than failing the download.
+    const subtitles = (await Promise.all((meta.subtitles || []).map(async (s) => {
+      try {
+        const r = await fetch(`${API}/subtitles/${s.id}`);
+        return r.ok ? { label: s.label, lang_code: s.lang_code, vtt: await r.text() } : null;
+      } catch { return null; }
+    }))).filter(Boolean);
+    await saveOfflineVideo(key, blob, { ...meta, subtitles });
     activeDownloads.delete(key);
     if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Saved offline`;
     showToast('Saved for offline viewing');
@@ -633,7 +602,8 @@ async function openDetail(id) {
   };
    const downloadBtn = document.getElementById('modal-download');
   if (downloadBtn) {
-    downloadBtn.onclick = () => downloadForOffline(mainOfflineKey, mainVideoUrl, { title: item.title, poster_url: item.poster_url }, downloadBtn);
+    const mainSubtitles = episodes.length ? episodes[0].subtitles : item.subtitles;
+    downloadBtn.onclick = () => downloadForOffline(mainOfflineKey, mainVideoUrl, { title: item.title, poster_url: item.poster_url, subtitles: mainSubtitles }, downloadBtn);
   }
   root.querySelectorAll('.episode-card-thumb').forEach(thumb => {
     thumb.addEventListener('click', () => {
@@ -644,7 +614,8 @@ async function openDetail(id) {
     root.querySelectorAll('.episode-download-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      downloadForOffline(btn.dataset.key, btn.dataset.video, { title: btn.dataset.title }, btn);
+      const ep = episodes.find(ep => `episode-${ep.id}` === btn.dataset.key);
+      downloadForOffline(btn.dataset.key, btn.dataset.video, { title: btn.dataset.title, subtitles: ep && ep.subtitles }, btn);
     });
   });
   const watchBtn = document.getElementById('modal-watch');
