@@ -1,6 +1,6 @@
 // Bump this on any deploy that changes cached files, so old caches get
 // cleared out and everyone picks up the new version automatically.
-const CACHE_VERSION = 'lumatostreaming-v5';
+const CACHE_VERSION = 'lumatostreaming-v6';
 
 const STATIC_ASSETS = [
   '/styles.css',
@@ -55,8 +55,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets (CSS/JS/icons): cache-first for speed, refreshing the
-  // cache in the background so the next load picks up any changes.
+  // Our own CSS/JS/icons: network-first, same as HTML, so a deploy takes
+  // effect on the very first load instead of one load later. Falls back to
+  // the cache when offline.
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      fetch(request)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  // Other origins (e.g. poster images): cache-first for speed, refreshing
+  // the cache in the background.
   event.respondWith(
     caches.match(request).then((cached) => {
       const fetchPromise = fetch(request).then((res) => {
