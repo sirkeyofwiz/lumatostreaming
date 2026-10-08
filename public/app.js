@@ -1109,6 +1109,10 @@ async function renderDownloadsPage() {
 }
 async function render() {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === state.route));
+  // Slides the bottom nav's notch and bubble to the active tab.
+  const bottomNav = document.getElementById('bottom-nav');
+  const bottomIndex = [...bottomNav.querySelectorAll('.nav-item')].findIndex(n => n.dataset.route === state.route);
+  if (bottomIndex >= 0) bottomNav.style.setProperty('--i', bottomIndex);
   const content = document.getElementById('content');
   const heroSlot = document.getElementById('hero-slot');
   const filterBar = document.getElementById('filter-bar');

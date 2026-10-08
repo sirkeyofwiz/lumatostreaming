@@ -208,13 +208,19 @@ main{flex:1; min-width:0; padding:0 0 40px;}
 
 /* ---------- Bottom nav (mobile only) ---------- */
 .bottom-nav{display:none;}
+.bottom-nav-bubble{display:none;}
+/* Registering --i (the active tab's index) lets it transition smoothly, which
+   moves the notch and bubble together. Browsers without @property just jump. */
+@property --i{syntax:'<number>'; inherits:true; initial-value:0;}
 
 .poster{transition:transform .25s ease, box-shadow .25s ease;}
 .card:hover .poster{transform:scale(1.04); box-shadow:0 12px 28px rgba(0,0,0,.55), 0 0 0 1px var(--teal);}
 .card:hover .card-title{color:var(--teal);}
 
 @media (max-width: 860px){
-  main{padding:0 0 68px;}
+  main{padding:0 0 110px;}
+  .toast{bottom:calc(96px + env(safe-area-inset-bottom, 0px));}
+  .bottom-nav-bubble{display:block;}
   #filter-bar, #content, .site-footer{padding-left:14px; padding-right:14px;}
   #hero-slot:empty{height:72px;}
   .topbar{padding:12px 14px;}
@@ -238,30 +244,50 @@ main{flex:1; min-width:0; padding:0 0 40px;}
   .modal-hero-title{font-size:28px;}
   .admin-form-row{grid-template-columns:1fr;}
 
+  /* Floating bottom nav with a notched bubble (see the @property note above):
+     the bar's background has a round cutout at the active item, and the gold
+     bubble sits in it. Both are positioned from --i, so they glide together. */
   .bottom-nav{
+    --n:6;
     display:flex !important;
     flex-direction:row !important;
     flex-wrap:nowrap !important;
-    width:100%;
-    position:fixed; bottom:0; left:0; right:0; z-index:40;
-    background:var(--surface);
-    border-top:1px solid var(--border);
-    padding-bottom:env(safe-area-inset-bottom, 0);
+    position:fixed; z-index:40;
+    left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom, 0px));
+    height:62px;
+    border-radius:22px;
+    background:radial-gradient(circle at calc((var(--i) + .5) * 100% / var(--n)) -6px, transparent 34px, var(--surface-2) 35px);
+    filter:drop-shadow(0 10px 24px rgba(0,0,0,.55));
+    transition:--i .55s cubic-bezier(.34, 1.36, .64, 1);
+  }
+  .bottom-nav-bubble{
+    position:absolute; top:-31px; left:calc((var(--i) + .5) * 100% / var(--n));
+    width:50px; height:50px; margin-left:-25px; border-radius:50%;
+    background:linear-gradient(135deg, var(--gold), #C9862C);
+    box-shadow:0 6px 16px rgba(232,163,61,.35);
   }
   .bottom-nav .nav-item{
+    position:relative; z-index:1;
     flex:1 1 0; min-width:0;
     display:flex !important;
     flex-direction:column !important;
-    align-items:center; justify-content:center;
-    gap:1px;
-    padding:6px 4px 5px;
+    align-items:center; justify-content:flex-start;
+    gap:6px;
+    padding:12px 2px 0;
     border-radius:0;
-    font-size:9.5px;
+    font-size:10px; font-weight:500;
+    color:var(--text-dim);
     text-align:center;
     white-space:nowrap;
+    -webkit-tap-highlight-color:transparent;
   }
-  .bottom-nav .nav-item svg{width:16px; height:16px; flex-shrink:0;}
-  .bottom-nav .nav-item.active{background:transparent; color:var(--teal);}
+  .bottom-nav .nav-item:hover{background:transparent;}
+  .bottom-nav .nav-item svg{width:20px; height:20px; flex-shrink:0; transition:transform .55s cubic-bezier(.34, 1.36, .64, 1), color .3s;}
+  .bottom-nav .nav-item span{transition:transform .4s ease, color .3s;}
+  /* The active icon rises into the bubble; its label settles into the gap. */
+  .bottom-nav .nav-item.active{background:transparent; color:var(--text); font-weight:700;}
+  .bottom-nav .nav-item.active svg{transform:translateY(-28px); color:#241706;}
+  .bottom-nav .nav-item.active span{transform:translateY(4px);}
 }
 
 @media (max-width: 480px){
