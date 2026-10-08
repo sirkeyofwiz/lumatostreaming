@@ -218,7 +218,9 @@ app.get('/api/titles', ah(async (req, res) => {
 
   if (type) { sql += ' AND type = ?'; params.push(type); }
   if (genre) { sql += ' AND genre = ?'; params.push(genre); }
-  if (q) { sql += ' AND title LIKE ?'; params.push(`%${q}%`); }
+  // LOWER on both sides: Postgres LIKE is case-sensitive (SQLite's isn't),
+  // so without it "spider" wouldn't find "Spider-Man" in production.
+  if (q) { sql += ' AND LOWER(title) LIKE LOWER(?)'; params.push(`%${q}%`); }
 
   sql += sort === 'rating' ? ' ORDER BY rating DESC'
     : sort === 'year' ? ' ORDER BY year DESC'

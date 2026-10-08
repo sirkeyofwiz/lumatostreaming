@@ -1208,6 +1208,23 @@ async function render() {
     return;
   }
 
+  if (state.route === 'search') {
+    heroSlot.innerHTML = '';
+    filterBar.hidden = true;
+    const query = state.query;
+    const items = await api(`/titles?q=${encodeURIComponent(query)}&sort=rating`);
+    if (state.route !== 'search' || state.query !== query) return; // superseded by newer typing
+    const shown = query.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    content.innerHTML = `
+      <div class="section">
+        <div class="section-head"><div class="section-title">Results for “${shown}”</div></div>
+        ${items.length ? `<div class="grid">${items.map(posterCard).join('')}</div>` : `<div class="empty-state">No movies or shows match “${shown}”.</div>`}
+      </div>
+    `;
+    attachCardHandlers(content);
+    return;
+  }
+
    if (state.route === 'Movie zilizotafsiriwa') {
     heroSlot.innerHTML = '';
     filterBar.hidden = true;
@@ -1280,7 +1297,10 @@ document.getElementById('search-input').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     state.query = e.target.value.trim();
-    if (state.query && state.route === 'home') state.route = 'movie';
+    // From home, search everything (movies and shows); on the Movies or
+    // Shows pages it narrows that page. Clearing it returns home.
+    if (state.query && state.route === 'home') state.route = 'search';
+    if (!state.query && state.route === 'search') state.route = 'home';
     render();
   }, 250);
 });
