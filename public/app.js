@@ -546,10 +546,48 @@ function rerenderDownloads() {
   if (state.route === 'downloads') renderDownloadsPage();
 }
 
-async function downloadForOffline(key, url, meta, buttonEl) {
+// Keys of videos fully saved offline, kept in memory so every "Save offline"
+// button can show its real state the moment it's drawn.
+const savedOfflineKeys = new Set();
+const savedOfflineReady = listOfflineVideos()
+  .then((videos) => videos.forEach((v) => savedOfflineKeys.add(v.key)))
+  .catch(() => {});
+
+function offlineButtonState(key) {
+  if (savedOfflineKeys.has(key)) return { cls: 'is-saved', html: `${checkIcon()} Downloaded` };
+  const d = activeDownloads.get(key);
+  if (d && d.status === 'failed') return { cls: 'is-paused', html: `${downloadIcon()} Paused – tap to resume` };
+  if (d) return { cls: 'is-downloading', html: `${downloadIcon()} Downloading ${d.progress}%` };
+  return { cls: '', html: `${downloadIcon()} Save offline` };
+}
+
+// HTML for a download button; `classes` are its base classes.
+function offlineButtonHtml(key, classes, attrs = '') {
+  const s = offlineButtonState(key);
+  return `<div class="${classes} offline-btn ${s.cls}" data-key="${key}" ${attrs}>${s.html}</div>`;
+}
+
+// Redraws every visible download button for this video (a series' first
+// episode can appear twice: the main button and its episode card).
+function updateOfflineButtons(key) {
+  const s = offlineButtonState(key);
+  document.querySelectorAll(`.offline-btn[data-key="${key}"]`).forEach((btn) => {
+    btn.classList.remove('is-saved', 'is-paused', 'is-downloading');
+    if (s.cls) btn.classList.add(s.cls);
+    btn.innerHTML = s.html;
+  });
+}
+
+async function downloadForOffline(key, url, meta) {
   if (!url) { showToast('No video linked yet.'); return; }
+  if (savedOfflineKeys.has(key)) { showToast('Already downloaded — find it on the Downloads page.'); return; }
   const existing = await getOfflineVideo(key).catch(() => null);
-  if (existing) { showToast('Already saved offline.'); return; }
+  if (existing) {
+    savedOfflineKeys.add(key);
+    updateOfflineButtons(key);
+    showToast('Already downloaded — find it on the Downloads page.');
+    return;
+  }
   if (downloadControllers.has(key)) { showToast('Already downloading — check the Downloads page.'); return; }
 
   if (navigator.storage && navigator.storage.persist) {
@@ -561,20 +599,20 @@ async function downloadForOffline(key, url, meta, buttonEl) {
   const job = (await getPendingDownload(key).catch(() => null))
     || { key, url, meta, received: 0, total: 0, parts: 0, contentType: '' };
   showToast(job.received ? 'Resuming download — check the Downloads page.' : 'Download started — check the Downloads page for progress.');
-  runDownload(job, buttonEl);
+  runDownload(job);
 }
 
 // Downloads whatever is still missing, waiting out dropped connections and
 // retrying with backoff. Received bytes are already in storage, so a retry
 // only asks the server for the rest.
-async function runDownload(job, buttonEl) {
+async function runDownload(job) {
   const { key } = job;
   if (downloadControllers.has(key)) return;
   const controller = new AbortController();
   downloadControllers.set(key, controller);
   delete job.error;
   setDownloadStatus(job, 'downloading');
-  if (buttonEl) buttonEl.textContent = 'Downloading...';
+  updateOfflineButtons(key);
   rerenderDownloads();
 
   try {
@@ -599,7 +637,7 @@ async function runDownload(job, buttonEl) {
     await finishDownload(job);
     downloadControllers.delete(key);
     activeDownloads.delete(key);
-    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Saved offline`;
+    savedOfflineKeys.add(key);
     showToast(`Saved for offline viewing: ${job.meta.title}`);
   } catch (err) {
     downloadControllers.delete(key);
@@ -613,8 +651,8 @@ async function runDownload(job, buttonEl) {
       setDownloadStatus(job, 'failed', { error: job.error });
       showToast('Download paused — open Downloads to retry.');
     }
-    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Save offline`;
   }
+  updateOfflineButtons(key);
   rerenderDownloads();
 }
 
@@ -742,6 +780,7 @@ async function cancelDownload(key) {
   }
   activeDownloads.delete(key);
   await discardPendingDownload(key);
+  updateOfflineButtons(key);
   rerenderDownloads();
 }
 
@@ -770,6 +809,7 @@ function updateDownloadRow(key) {
   if (bar) bar.style.width = d.progress + '%';
   const label = document.querySelector(`.download-progress-label[data-key="${key}"]`);
   if (label) label.textContent = downloadStatusText(d);
+  updateOfflineButtons(key);
 }
 
 function isDirectFile(url) {
@@ -838,8 +878,7 @@ async function openDetail(id) {
 
     const episodes = item.type === 'series' ? await api(`/titles/${id}/episodes`) : [];
   const seasons = [...new Set(episodes.map(e => e.season_number))];
-  const offlineSaved = await listOfflineVideos();
-  const offlineKeys = new Set(offlineSaved.map(v => v.key));
+  await savedOfflineReady;
 
   const episodesHtml = episodes.length ? `
     <div class="modal-row" style="margin-top:20px; margin-bottom:8px;"><span class="label">Episodes</span></div>
@@ -855,9 +894,7 @@ async function openDetail(id) {
             </div>
             <div class="episode-card-name">${e.name}</div>
                       ${isDirectFile(e.video_url) ? `
-              <div class="episode-download-btn" data-key="episode-${e.id}" data-video="${e.video_url}" data-title="${item.title} — S${e.season_number}E${e.episode_number} — ${e.name}">
-                ${downloadIcon()} ${offlineKeys.has(`episode-${e.id}`) ? 'Saved offline' : 'Save offline'}
-              </div>
+              ${offlineButtonHtml(`episode-${e.id}`, 'episode-download-btn', `data-video="${e.video_url}" data-title="${item.title} — S${e.season_number}E${e.episode_number} — ${e.name}"`)}
             ` : ''}
           </div>
         `).join('')}
@@ -884,7 +921,7 @@ async function openDetail(id) {
           <div class="modal-row"><span class="label">Rating</span><span>${item.rating.toFixed(1)} / 10</span></div>
           <div class="modal-actions">
             <div class="btn btn-gold" id="modal-play">${episodes.length ? `Play S${episodes[0].season_number}E${episodes[0].episode_number}` : 'Play'}</div>
-                        ${showDownload ? `<div class="btn btn-outline" id="modal-download">${downloadIcon()} ${offlineKeys.has(mainOfflineKey) ? 'Saved offline' : 'Save offline'}</div>` : ''}
+                        ${showDownload ? offlineButtonHtml(mainOfflineKey, 'btn btn-outline', 'id="modal-download"') : ''}
             <div class="btn btn-outline ${item.in_watchlist ? 'on' : ''}" id="modal-watch">
               ${item.in_watchlist ? 'In watchlist' : 'Add to watchlist'}
             </div>
@@ -905,7 +942,7 @@ async function openDetail(id) {
    const downloadBtn = document.getElementById('modal-download');
   if (downloadBtn) {
     const mainSubtitles = episodes.length ? episodes[0].subtitles : item.subtitles;
-    downloadBtn.onclick = () => downloadForOffline(mainOfflineKey, mainVideoUrl, { title: item.title, poster_url: item.poster_url, subtitles: mainSubtitles }, downloadBtn);
+    downloadBtn.onclick = () => downloadForOffline(mainOfflineKey, mainVideoUrl, { title: item.title, poster_url: item.poster_url, subtitles: mainSubtitles });
   }
   root.querySelectorAll('.episode-card-thumb').forEach(thumb => {
     thumb.addEventListener('click', () => {
@@ -918,7 +955,7 @@ async function openDetail(id) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const ep = episodes.find(ep => `episode-${ep.id}` === btn.dataset.key);
-      downloadForOffline(btn.dataset.key, btn.dataset.video, { title: btn.dataset.title, subtitles: ep && ep.subtitles }, btn);
+      downloadForOffline(btn.dataset.key, btn.dataset.video, { title: btn.dataset.title, subtitles: ep && ep.subtitles });
     });
   });
   const watchBtn = document.getElementById('modal-watch');
@@ -1127,6 +1164,7 @@ async function renderDownloadsPage() {
     btn.addEventListener('click', async () => {
       const row = btn.closest('.download-row');
       await deleteOfflineVideo(row.dataset.key);
+      savedOfflineKeys.delete(row.dataset.key);
       showToast('Removed from downloads');
       renderDownloadsPage();
     });

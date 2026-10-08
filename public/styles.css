@@ -198,6 +198,15 @@ main{flex:1; min-width:0; padding:0 0 40px;}
 .episode-card-name{font-size:12.5px; font-weight:600; margin-top:7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .episode-download-btn{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--teal); margin-top:5px; cursor:pointer; width:fit-content;}
 .episode-download-btn:hover{text-decoration:underline;}
+.offline-btn svg{width:14px; height:14px; flex-shrink:0;}
+/* Downloaded: clearly different from "Save offline", and no longer looks
+   clickable. Downloading shows live progress; paused invites a retry. */
+.offline-btn.is-saved{color:var(--gold); cursor:default; font-weight:700;}
+.offline-btn.is-saved:hover{text-decoration:none;}
+.btn.offline-btn.is-saved{background:rgba(232,163,61,.12); border-color:var(--gold);}
+.offline-btn.is-downloading{color:var(--text-dim); cursor:default;}
+.offline-btn.is-downloading:hover{text-decoration:none;}
+.offline-btn.is-paused{color:var(--red);}
 .download-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:10px;}
 .download-progress-track{width:100%; height:8px; background:var(--surface-2); border-radius:4px; overflow:hidden;}
 .download-progress-fill{height:100%; background:var(--gold); border-radius:4px; transition:width .2s ease;}
