@@ -396,14 +396,28 @@ function downloadIcon() {
 
 const OFFLINE_DB_NAME = 'lumatostreaming-offline';
 const OFFLINE_STORE = 'videos';
+// In-progress downloads survive reloads and dropped connections: each job's
+// state lives in PENDING_STORE and the bytes received so far are written to
+// PARTS_STORE in PART_SIZE pieces, so a retry resumes with a Range request
+// instead of starting over.
+const PENDING_STORE = 'pending';
+const PARTS_STORE = 'parts';
+const PART_SIZE = 8 * 1024 * 1024;
+const MAX_RETRIES = 10;
 
 function openOfflineDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(OFFLINE_DB_NAME, 1);
+    const req = indexedDB.open(OFFLINE_DB_NAME, 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(OFFLINE_STORE)) {
         db.createObjectStore(OFFLINE_STORE, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(PENDING_STORE)) {
+        db.createObjectStore(PENDING_STORE, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(PARTS_STORE)) {
+        db.createObjectStore(PARTS_STORE, { keyPath: 'id' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -411,14 +425,31 @@ function openOfflineDB() {
   });
 }
 
-async function saveOfflineVideo(key, blob, meta) {
+// Runs fn(store) in a transaction and resolves once it commits. onabort is
+// needed as well as onerror: running out of storage aborts the transaction
+// without an error event, which would otherwise leave the promise hanging.
+async function offlineWrite(storeName, fn) {
   const db = await openOfflineDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(OFFLINE_STORE, 'readwrite');
-    tx.objectStore(OFFLINE_STORE).put({ key, blob, ...meta, savedAt: Date.now() });
+    const tx = db.transaction(storeName, 'readwrite');
+    fn(tx.objectStore(storeName));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Storage write aborted'));
   });
+}
+
+async function offlineRead(storeName, fn) {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const req = fn(db.transaction(storeName, 'readonly').objectStore(storeName));
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveOfflineVideo(key, blob, meta) {
+  return offlineWrite(OFFLINE_STORE, (store) => store.put({ key, blob, ...meta, savedAt: Date.now() }));
 }
 
 async function getOfflineVideo(key) {
@@ -458,64 +489,267 @@ function formatBytes(bytes) {
   return (mb / 1024).toFixed(2) + ' GB';
 }
 
+const downloadControllers = new Map(); // key -> AbortController of the download currently running
+
+function partId(key, index) {
+  return `${key}#${index}`;
+}
+
+function getPendingDownload(key) {
+  return offlineRead(PENDING_STORE, (store) => store.get(key)).then((job) => job || null);
+}
+
+function savePendingDownload(job) {
+  return offlineWrite(PENDING_STORE, (store) => store.put(job));
+}
+
+function clearDownloadParts(job) {
+  return offlineWrite(PARTS_STORE, (store) => {
+    for (let i = 0; i < job.parts; i++) store.delete(partId(job.key, i));
+  });
+}
+
+// Removes every trace of an unfinished download.
+async function discardPendingDownload(key) {
+  const job = await getPendingDownload(key);
+  if (!job) return;
+  await clearDownloadParts(job);
+  await offlineWrite(PENDING_STORE, (store) => store.delete(key));
+}
+
+function setDownloadStatus(job, status, extra = {}) {
+  const progress = job.total ? Math.min(100, Math.round((job.received / job.total) * 100)) : 0;
+  activeDownloads.set(job.key, { title: job.meta.title, progress, status, ...extra });
+}
+
+function rerenderDownloads() {
+  if (state.route === 'downloads') renderDownloadsPage();
+}
+
 async function downloadForOffline(key, url, meta, buttonEl) {
   if (!url) { showToast('No video linked yet.'); return; }
   const existing = await getOfflineVideo(key).catch(() => null);
   if (existing) { showToast('Already saved offline.'); return; }
-  if (activeDownloads.has(key)) { showToast('Already downloading — check the Downloads page.'); return; }
+  if (downloadControllers.has(key)) { showToast('Already downloading — check the Downloads page.'); return; }
 
   if (navigator.storage && navigator.storage.persist) {
     navigator.storage.persist().catch(() => {});
   }
 
-  activeDownloads.set(key, { title: meta.title, progress: 0 });
-  showToast('Download started — check the Downloads page for progress.');
-  if (buttonEl) buttonEl.textContent = 'Downloading...';
-  if (state.route === 'downloads') renderDownloadsPage();
-
-  try {
-    const res = await fetch(url);
-    if (!res.ok || !res.body) throw new Error('Download failed');
-    const total = Number(res.headers.get('Content-Length')) || 0;
-    const reader = res.body.getReader();
-    const chunks = [];
-    let received = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      const pct = total ? Math.round((received / total) * 100) : 0;
-      activeDownloads.set(key, { title: meta.title, progress: pct });
-      updateDownloadProgressBar(key, pct);
-    }
-    const blob = new Blob(chunks, { type: res.headers.get('Content-Type') || 'video/mp4' });
-    // Store each subtitle's text with the video so it can play offline.
-    // A subtitle that fails to fetch is skipped rather than failing the download.
-    const subtitles = (await Promise.all((meta.subtitles || []).map(async (s) => {
-      try {
-        const r = await fetch(`${API}/subtitles/${s.id}`);
-        return r.ok ? { label: s.label, lang_code: s.lang_code, vtt: await r.text() } : null;
-      } catch { return null; }
-    }))).filter(Boolean);
-    await saveOfflineVideo(key, blob, { ...meta, subtitles });
-    activeDownloads.delete(key);
-    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Saved offline`;
-    showToast('Saved for offline viewing');
-    if (state.route === 'downloads') renderDownloadsPage();
-  } catch (err) {
-    activeDownloads.delete(key);
-    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Save offline`;
-    showToast('Download failed — try again.');
-    if (state.route === 'downloads') renderDownloadsPage();
-  }
+  // An earlier attempt that failed or was cut off by a reload carries on
+  // from where it stopped instead of starting over.
+  const job = (await getPendingDownload(key).catch(() => null))
+    || { key, url, meta, received: 0, total: 0, parts: 0, contentType: '' };
+  showToast(job.received ? 'Resuming download — check the Downloads page.' : 'Download started — check the Downloads page for progress.');
+  runDownload(job, buttonEl);
 }
 
-function updateDownloadProgressBar(key, pct) {
+// Downloads whatever is still missing, waiting out dropped connections and
+// retrying with backoff. Received bytes are already in storage, so a retry
+// only asks the server for the rest.
+async function runDownload(job, buttonEl) {
+  const { key } = job;
+  if (downloadControllers.has(key)) return;
+  const controller = new AbortController();
+  downloadControllers.set(key, controller);
+  delete job.error;
+  setDownloadStatus(job, 'downloading');
+  if (buttonEl) buttonEl.textContent = 'Downloading...';
+  rerenderDownloads();
+
+  try {
+    await savePendingDownload(job);
+    let attempt = 0;
+    while (true) {
+      const receivedBefore = job.received;
+      try {
+        await fetchRemaining(job, controller.signal);
+        break;
+      } catch (err) {
+        if (controller.signal.aborted || err.permanent) throw err;
+        // Progress since the last try means the connection works on and off,
+        // so the retry budget starts again rather than running out.
+        attempt = job.received > receivedBefore ? 1 : attempt + 1;
+        if (attempt > MAX_RETRIES) throw err;
+        await waitBeforeRetry(job, attempt, controller.signal);
+        setDownloadStatus(job, 'downloading');
+        updateDownloadRow(key);
+      }
+    }
+    await finishDownload(job);
+    downloadControllers.delete(key);
+    activeDownloads.delete(key);
+    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Saved offline`;
+    showToast(`Saved for offline viewing: ${job.meta.title}`);
+  } catch (err) {
+    downloadControllers.delete(key);
+    if (controller.signal.aborted) {
+      // Cancelled from the Downloads page.
+      activeDownloads.delete(key);
+      await discardPendingDownload(key).catch(() => {});
+    } else {
+      job.error = describeDownloadError(err);
+      await savePendingDownload(job).catch(() => {});
+      setDownloadStatus(job, 'failed', { error: job.error });
+      showToast('Download paused — open Downloads to retry.');
+    }
+    if (buttonEl) buttonEl.innerHTML = `${downloadIcon()} Save offline`;
+  }
+  rerenderDownloads();
+}
+
+async function fetchRemaining(job, signal) {
+  const headers = job.received ? { Range: `bytes=${job.received}-` } : {};
+  const res = await fetch(job.url, { headers, signal });
+  // 416 means there's nothing left past what we already have.
+  if (res.status === 416 && job.total && job.received >= job.total) return;
+  if (!res.ok || !res.body) {
+    const err = new Error(`The video server responded with an error (${res.status}).`);
+    // Other 4xx errors (missing file, no access) won't fix themselves on retry.
+    err.permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
+    throw err;
+  }
+
+  const length = Number(res.headers.get('Content-Length')) || 0;
+  if (res.status === 206) {
+    if (!job.total && length) job.total = job.received + length;
+  } else {
+    // A full response: either the first attempt, or the server ignored the
+    // Range header, in which case the saved pieces can't be reused.
+    if (job.parts) {
+      await clearDownloadParts(job);
+      job.parts = 0;
+      job.received = 0;
+    }
+    job.total = length;
+  }
+  if (!job.contentType) job.contentType = res.headers.get('Content-Type') || 'video/mp4';
+
+  const reader = res.body.getReader();
+  let buffer = [];
+  let buffered = 0;
+  const flush = async () => {
+    if (!buffered) return;
+    const blob = new Blob(buffer);
+    await offlineWrite(PARTS_STORE, (store) => store.put({ id: partId(job.key, job.parts), blob }));
+    job.parts += 1;
+    job.received += buffered;
+    buffer = [];
+    buffered = 0;
+    await savePendingDownload(job);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read(); // rejects when the connection drops
+    if (done) break;
+    buffer.push(value);
+    buffered += value.length;
+    if (buffered >= PART_SIZE) await flush();
+    const pct = job.total ? Math.min(100, Math.round(((job.received + buffered) / job.total) * 100)) : 0;
+    activeDownloads.set(job.key, { title: job.meta.title, progress: pct, status: 'downloading' });
+    updateDownloadRow(job.key);
+  }
+  await flush();
+  if (job.total && job.received < job.total) throw new Error('Connection closed before the download finished.');
+}
+
+async function waitBeforeRetry(job, attempt, signal) {
+  let seconds = Math.min(30, 2 ** attempt);
+  if (!navigator.onLine) {
+    setDownloadStatus(job, 'waiting');
+    updateDownloadRow(job.key);
+    await new Promise((resolve) => {
+      const done = () => {
+        window.removeEventListener('online', done);
+        signal.removeEventListener('abort', done);
+        resolve();
+      };
+      window.addEventListener('online', done);
+      signal.addEventListener('abort', done);
+    });
+    seconds = 2; // back online — give it a moment to settle, then go
+  }
+  while (seconds > 0 && !signal.aborted) {
+    setDownloadStatus(job, 'retrying', { retryIn: seconds });
+    updateDownloadRow(job.key);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    seconds--;
+  }
+  if (signal.aborted) throw new DOMException('Download cancelled', 'AbortError');
+}
+
+async function finishDownload(job) {
+  const pieces = [];
+  for (let i = 0; i < job.parts; i++) {
+    const part = await offlineRead(PARTS_STORE, (store) => store.get(partId(job.key, i)));
+    if (!part) {
+      // The browser cleared some of the saved data; only a fresh start can fix it.
+      await clearDownloadParts(job);
+      Object.assign(job, { parts: 0, received: 0, total: 0 });
+      throw Object.assign(new Error('Part of the saved download was lost. Retry to download it again.'), { permanent: true });
+    }
+    pieces.push(part.blob);
+  }
+  const blob = new Blob(pieces, { type: job.contentType || 'video/mp4' });
+  // Store each subtitle's text with the video so it can play offline.
+  // A subtitle that fails to fetch is skipped rather than failing the download.
+  const subtitles = (await Promise.all((job.meta.subtitles || []).map(async (s) => {
+    try {
+      const r = await fetch(`${API}/subtitles/${s.id}`);
+      return r.ok ? { label: s.label, lang_code: s.lang_code, vtt: await r.text() } : null;
+    } catch { return null; }
+  }))).filter(Boolean);
+  await saveOfflineVideo(job.key, blob, { ...job.meta, subtitles });
+  await discardPendingDownload(job.key);
+}
+
+function describeDownloadError(err) {
+  if (err && err.name === 'QuotaExceededError') return 'Not enough storage space on this device.';
+  if (err && err.permanent) return err.message;
+  return 'The connection kept dropping.';
+}
+
+async function retryDownload(key) {
+  const job = await getPendingDownload(key);
+  if (job) runDownload(job);
+}
+
+async function cancelDownload(key) {
+  const controller = downloadControllers.get(key);
+  if (controller) {
+    controller.abort(); // runDownload cleans up once the fetch stops
+    return;
+  }
+  activeDownloads.delete(key);
+  await discardPendingDownload(key);
+  rerenderDownloads();
+}
+
+// Picks up downloads from an earlier visit: interrupted ones carry on by
+// themselves, failed ones wait on the Downloads page for a retry.
+async function resumePendingDownloads() {
+  const jobs = await offlineRead(PENDING_STORE, (store) => store.getAll()).catch(() => []);
+  for (const job of jobs) {
+    if (job.error) setDownloadStatus(job, 'failed', { error: job.error });
+    else runDownload(job);
+  }
+  if (jobs.length) rerenderDownloads();
+}
+
+function downloadStatusText(d) {
+  if (d.status === 'waiting') return 'Waiting for connection…';
+  if (d.status === 'retrying') return `Connection lost — retrying in ${d.retryIn}s`;
+  if (d.status === 'failed') return `Paused at ${d.progress}%`;
+  return d.progress + '%';
+}
+
+function updateDownloadRow(key) {
+  const d = activeDownloads.get(key);
+  if (!d) return;
   const bar = document.querySelector(`.download-progress-fill[data-key="${key}"]`);
-  if (bar) bar.style.width = pct + '%';
+  if (bar) bar.style.width = d.progress + '%';
   const label = document.querySelector(`.download-progress-label[data-key="${key}"]`);
-  if (label) label.textContent = pct + '%';
+  if (label) label.textContent = downloadStatusText(d);
 }
 
 function isDirectFile(url) {
@@ -717,14 +951,19 @@ async function renderDownloadsPage() {
     <div class="section-head"><div class="section-title">Downloading</div></div>
     <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:24px;">
       ${inProgress.map(([key, d]) => `
-        <div class="download-row">
+        <div class="download-row" data-key="${key}">
           <div style="min-width:0; flex:1;">
             <div style="font-weight:600; font-size:14px; margin-bottom:8px;">${d.title}</div>
             <div class="download-progress-track">
-              <div class="download-progress-fill" data-key="${key}" style="width:${d.progress}%;"></div>
+              <div class="download-progress-fill${d.status === 'failed' ? ' paused' : ''}" data-key="${key}" style="width:${d.progress}%;"></div>
             </div>
+            ${d.status === 'failed' ? `<div style="font-size:12px; color:var(--red); margin-top:6px;">${d.error}</div>` : ''}
           </div>
-          <div class="download-progress-label" data-key="${key}" style="font-size:12px; color:var(--text-dim); flex-shrink:0;">${d.progress}%</div>
+          <div class="download-progress-label" data-key="${key}" style="font-size:12px; color:var(--text-dim); flex-shrink:0;">${downloadStatusText(d)}</div>
+          <div style="display:flex; gap:8px; flex-shrink:0;">
+            ${d.status === 'failed' ? `<div class="btn btn-gold download-retry-btn" style="padding:8px 14px; font-size:12.5px;">Retry</div>` : ''}
+            <div class="btn btn-outline download-cancel-btn" style="padding:8px 14px; font-size:12.5px; color:var(--red); border-color:var(--red);">${d.status === 'failed' ? 'Remove' : 'Cancel'}</div>
+          </div>
         </div>
       `).join('')}
     </div>
@@ -758,6 +997,12 @@ async function renderDownloadsPage() {
       const video = saved.find(v => v.key === row.dataset.key);
       openPlayer({ offlineKey: video.key });
     });
+  });
+  content.querySelectorAll('.download-retry-btn').forEach(btn => {
+    btn.addEventListener('click', () => retryDownload(btn.closest('.download-row').dataset.key));
+  });
+  content.querySelectorAll('.download-cancel-btn').forEach(btn => {
+    btn.addEventListener('click', () => cancelDownload(btn.closest('.download-row').dataset.key));
   });
   content.querySelectorAll('.download-remove-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -891,6 +1136,7 @@ document.getElementById('search-input').addEventListener('input', (e) => {
 });
 
 refreshUser().then(render);
+resumePendingDownloads();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

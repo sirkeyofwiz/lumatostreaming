@@ -1,6 +1,6 @@
 // Bump this on any deploy that changes cached files, so old caches get
 // cleared out and everyone picks up the new version automatically.
-const CACHE_VERSION = 'lumatostreaming-v6';
+const CACHE_VERSION = 'lumatostreaming-v7';
 
 const STATIC_ASSETS = [
   '/styles.css',
@@ -73,8 +73,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Other origins (e.g. poster images): cache-first for speed, refreshing
-  // the cache in the background.
+  // Other origins: only posters, fonts and stylesheets are cached. Videos
+  // (streams and offline downloads) go straight to the network — caching
+  // them would store a second copy of every movie.
+  if (!['image', 'font', 'style'].includes(request.destination)) return;
+
+  // Cache-first for speed, refreshing the cache in the background.
   event.respondWith(
     caches.match(request).then((cached) => {
       const fetchPromise = fetch(request).then((res) => {
