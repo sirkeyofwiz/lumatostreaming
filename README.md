@@ -2,9 +2,6 @@
 
 A small full-stack movie/TV catalog browser: Node/Express API, a swappable SQLite/Postgres database, user accounts with per-user watchlists, and an admin panel for managing the catalog. All titles, cast, and descriptions are original/fictional — this is a UI and architecture demo, not a real streaming service (there's no video playback).
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
-*(Push this repo to GitHub first, then use that repo's URL with the button above — see the Deploying section below.)*
-
 
 ## Stack
 - **Backend:** Node.js + Express, REST API, cookie sessions (`express-session`)
@@ -42,7 +39,6 @@ lumatostreaming/
 │   ├── index.html / styles.css / app.js     # main site
 │   └── admin.html / admin.css / admin.js     # admin panel
 ├── package.json
-├── render.yaml         # Render Blueprint — one-click web service + Postgres
 └── lumatostreaming.db      # created after `npm run seed` (SQLite mode only)
 ```
 
@@ -117,26 +113,9 @@ This product uses the TMDB API but is not endorsed or certified by TMDB — attr
 | PUT    | `/api/admin/titles/:id`             | admin     | Update a title |
 | DELETE | `/api/admin/titles/:id`             | admin     | Delete a title |
 
-## Deploying with Render (one click, via Blueprint)
+## Deploying
 
-This repo includes a `render.yaml` Blueprint that provisions the web service *and* a free Postgres database together, wires `DATABASE_URL` between them automatically, and seeds the catalog + an admin account on first deploy — no manual dashboard clicking required.
-
-1. Push this repo to GitHub (if you haven't already).
-2. Go to [render.com/deploy](https://render.com/deploy) and paste your repo URL — or, once it's pushed, use a link of the form:
-   `https://render.com/deploy?repo=https://github.com/<you>/<repo>`
-3. Render reads `render.yaml` and shows you a preview of what it'll create: the `lumatostreaming` web service and the `lumatostreaming-db` database.
-4. You'll be prompted for one value — `SEED_ADMIN_PASSWORD` — since that's marked `sync: false` in the Blueprint for security (it's not hardcoded anywhere). Choose your own admin password here.
-5. Click **Deploy Blueprint**. Render builds the service, provisions the database, and — on this first deploy only — runs `npm run seed` automatically via `initialDeployHook`. Nothing wipes or reseeds on future deploys.
-6. When it's done, open the web service's URL and sign in with `admin` / the password you chose.
-
-**Free tier caveats worth knowing going in:**
-- The web service sleeps after 15 min idle and takes 30–60s to wake back up on the next visit — fine for a demo, not for anything real-time.
-- Render's free Postgres gets deleted after 30 days. If this needs to stick around, budget ~$7/mo for the paid Postgres tier before that clock runs out.
-- Sessions use Express's in-memory store (see note above) — signed-in users get logged out whenever the free instance spins down from inactivity. Swap in `connect-pg-simple` if that's a problem for you.
-
-### Manual setup (without the Blueprint)
-
-If you'd rather click through the dashboard yourself, or use a different host:
+The live site runs on Railway, which redeploys automatically on every push to `main`. To set it up on Railway or any other Node host:
 
 1. Provision a Postgres database (Render, Railway, Supabase, Neon, RDS, etc.) and grab its connection string.
 2. Set environment variables on your host:
@@ -145,7 +124,7 @@ If you'd rather click through the dashboard yourself, or use a different host:
    - `SEED_ADMIN_PASSWORD=<your choice>` (only needed the one time you run the seed script)
    - `NODE_ENV=production`
 3. Deploy the app (any Node host works — Render, Railway, Fly.io, a VPS). Build command `npm install`, start command `npm start`.
-4. Run `npm run seed` once against the deployed database — either via a one-off command on your host, or locally with `DATABASE_URL` pointed at the remote DB (e.g. Render's *External* connection string).
+4. Run `npm run seed` once against the deployed database — either via a one-off command on your host, or locally with `DATABASE_URL` pointed at the remote DB (e.g. your database's public connection string).
 5. The app auto-creates its tables on boot (`ensureSchema`), so the seed step is really just for the starter catalog + admin account — you don't need to run migrations by hand.
 
 No code changes are needed to switch backends — `server/db/index.js` picks the driver based on whether `DATABASE_URL` is set.
