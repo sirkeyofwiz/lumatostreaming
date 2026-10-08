@@ -759,6 +759,53 @@ function downloadIcon() {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>`;
 }
 
+// Episodes have no thumbnail images, so each card shows a frame from its own
+// video instead: a still from ~10% in (skipping intros and black opening
+// frames), with a muted clip playing on hover where hover exists. Videos only
+// load once their card scrolls into view, so a long season doesn't fetch
+// every episode at once.
+let episodePreviewObserver = null;
+
+function setupEpisodePreviews(root) {
+  if (episodePreviewObserver) episodePreviewObserver.disconnect();
+  const videos = root.querySelectorAll('.episode-card-preview');
+  if (!videos.length) return;
+  const canHover = window.matchMedia('(hover: hover)').matches;
+
+  episodePreviewObserver = new IntersectionObserver((entries, observer) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      observer.unobserve(entry.target);
+      loadEpisodePreview(entry.target, canHover);
+    });
+  }, { rootMargin: '200px' });
+  videos.forEach((video) => episodePreviewObserver.observe(video));
+}
+
+function loadEpisodePreview(video, canHover) {
+  const thumb = video.closest('.episode-card-thumb');
+  let previewTime = 0;
+  video.addEventListener('loadedmetadata', () => {
+    previewTime = Math.min(video.duration * 0.1, 120) || 0;
+    video.currentTime = previewTime;
+  }, { once: true });
+  video.addEventListener('seeked', () => thumb.classList.add('has-preview'), { once: true });
+  // Unplayable or unreachable video: keep the plain card.
+  video.addEventListener('error', () => video.remove(), { once: true });
+  video.preload = 'metadata';
+  video.src = video.dataset.src;
+
+  if (!canHover) return;
+  thumb.addEventListener('mouseenter', () => {
+    if (!thumb.classList.contains('has-preview')) return;
+    video.play().catch(() => {});
+  });
+  thumb.addEventListener('mouseleave', () => {
+    video.pause();
+    video.currentTime = previewTime;
+  });
+}
+
 async function openDetail(id) {
   const item = await api(`/titles/${id}`);
   const root = document.getElementById('modal-root');
@@ -779,6 +826,7 @@ async function openDetail(id) {
         ${episodes.filter(e => e.season_number === s).map(e => `
           <div class="episode-card">
             <div class="episode-card-thumb" data-ep-id="${e.id}" data-video="${e.video_url || ''}" data-title="${item.title} — S${e.season_number}E${e.episode_number}">
+              ${isDirectFile(e.video_url) ? `<video class="episode-card-preview" data-src="${e.video_url}" muted playsinline preload="none"></video>` : ''}
               <div class="episode-card-num">E${e.episode_number}</div>
               <div class="episode-card-play">▶</div>
             </div>
@@ -842,6 +890,7 @@ async function openDetail(id) {
       openPlayer({ video_url: thumb.dataset.video, title: thumb.dataset.title, subtitles: ep && ep.subtitles });
     });
   });
+  setupEpisodePreviews(root);
     root.querySelectorAll('.episode-download-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();

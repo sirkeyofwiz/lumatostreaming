@@ -188,8 +188,13 @@ main{flex:1; min-width:0; padding:0 0 40px;}
 .episode-card{width:100%; flex-shrink:0; cursor:default;}
 .episode-card-thumb{position:relative; width:100%; aspect-ratio:16/9; border-radius:10px; background:linear-gradient(135deg, var(--surface-2), var(--surface)); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; cursor:pointer; overflow:hidden;}
 .episode-card-thumb:hover{border-color:var(--teal);}
-.episode-card-num{position:absolute; top:8px; left:8px; font-size:11px; font-weight:700; color:var(--text-dim); background:rgba(0,0,0,.5); padding:2px 7px; border-radius:5px;}
-.episode-card-play{width:34px; height:34px; border-radius:50%; background:rgba(0,0,0,.55); color:var(--teal); display:flex; align-items:center; justify-content:center; font-size:13px;}
+.episode-card-preview{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .3s ease; pointer-events:none;}
+.episode-card-thumb.has-preview .episode-card-preview{opacity:1;}
+.episode-card-num{position:absolute; z-index:1; top:8px; left:8px; font-size:11px; font-weight:700; color:var(--text-dim); background:rgba(0,0,0,.5); padding:2px 7px; border-radius:5px;}
+.episode-card-thumb.has-preview .episode-card-num{color:#fff;}
+.episode-card-play{position:relative; z-index:1; width:34px; height:34px; border-radius:50%; background:rgba(0,0,0,.55); color:var(--teal); display:flex; align-items:center; justify-content:center; font-size:13px; transition:opacity .2s;}
+/* With a moving preview, the play button steps aside while hovering. */
+.episode-card-thumb.has-preview:hover .episode-card-play{opacity:0;}
 .episode-card-name{font-size:12.5px; font-weight:600; margin-top:7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .episode-download-btn{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--teal); margin-top:5px; cursor:pointer; width:fit-content;}
 .episode-download-btn:hover{text-decoration:underline;}
