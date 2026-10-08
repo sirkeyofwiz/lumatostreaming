@@ -141,59 +141,57 @@ function showToast(msg) {
 async function refreshUser() {
   state.user = await api('/auth/me');
   renderTopbar();
-  renderSidebarAdminLink();
 }
 
+// The account button at the end of the top nav: opens sign-in when signed
+// out, or a menu (admin panel, recovery email, sign out) when signed in.
 function renderTopbar() {
   const el = document.getElementById('topbar-actions');
   if (state.user) {
     el.innerHTML = `
-      <div class="user-chip">
+      <div class="user-btn" id="user-btn" title="${state.user.username}">
         <div class="avatar">${state.user.username[0].toUpperCase()}</div>
-        <span>${state.user.username}</span>
-        ${state.user.is_admin ? '<span class="tag" style="color:#241706;background:var(--gold)">ADMIN</span>' : ''}
       </div>
-      ${!state.user.email ? `<div class="auth-hint-link" id="add-email-link" style="font-size:12px;">Add recovery email</div>` : ''}
-      <div class="btn btn-outline" id="logout-btn">Sign out</div>
+      <div class="user-menu" id="user-menu">
+        <div class="user-menu-head">
+          <div class="avatar">${state.user.username[0].toUpperCase()}</div>
+          <span>${state.user.username}</span>
+          ${state.user.is_admin ? '<span class="tag" style="color:#241706;background:var(--gold)">ADMIN</span>' : ''}
+        </div>
+        ${state.user.is_admin ? `<a class="user-menu-item" href="/admin.html">Admin panel</a>` : ''}
+        ${!state.user.email ? `<div class="user-menu-item" id="add-email-link">Add recovery email</div>` : ''}
+        <div class="user-menu-item" id="logout-btn">Sign out</div>
+      </div>
     `;
+    const menu = document.getElementById('user-menu');
+    document.getElementById('user-btn').onclick = (e) => {
+      e.stopPropagation();
+      menu.classList.toggle('open');
+    };
     if (!state.user.email) {
-      document.getElementById('add-email-link').onclick = () => openAddEmail();
+      document.getElementById('add-email-link').onclick = () => { menu.classList.remove('open'); openAddEmail(); };
     }
     document.getElementById('logout-btn').onclick = async () => {
       await api('/auth/logout', { method: 'POST' });
       state.user = null;
       renderTopbar();
-      renderSidebarAdminLink();
       showToast('Signed out');
       if (state.route === 'watchlist') render();
     };
   } else {
-    el.innerHTML = `<div class="btn btn-gold" id="signin-btn">Sign in</div>`;
+    el.innerHTML = `
+      <div class="user-btn" id="signin-btn" title="Sign in" aria-label="Sign in">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.5-7 8-7s8 3 8 7"/></svg>
+      </div>
+    `;
     document.getElementById('signin-btn').onclick = () => openAuthModal('login');
   }
 }
 
-function renderSidebarAdminLink() {
-  let link = document.getElementById('admin-nav-item');
-  if (state.user && state.user.is_admin) {
-    if (!link) {
-      link = document.createElement('a');
-      link.id = 'admin-nav-item';
-      link.href = '/admin.html';
-      link.className = 'nav-item';
-      link.style.cursor = 'pointer';
-      link.style.textDecoration = 'none';
-      link.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v4H4zM4 10h10v4H4zM4 16h16v4H4z"/></svg>Admin panel`;
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        window.location.href = '/admin.html';
-      });
-      document.querySelector('.nav-divider').after(link);
-    }
-  } else if (link) {
-    link.remove();
-  }
-}
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('user-menu');
+  if (menu && !e.target.closest('#user-menu')) menu.classList.remove('open');
+});
 
 function openAuthModal(mode) {
   const root = document.getElementById('modal-root');
@@ -245,7 +243,6 @@ function openAuthModal(mode) {
       if (!res.ok) { errEl.textContent = data.error || 'Something went wrong.'; return; }
       state.user = data;
       renderTopbar();
-      renderSidebarAdminLink();
       root.innerHTML = '';
       showToast(isLogin ? `Welcome back, ${data.username}` : `Account created — welcome, ${data.username}`);
       if (state.route === 'watchlist') render();
@@ -864,42 +861,90 @@ async function openDetail(id) {
 
 let heroTimer = null;
 
+// The full-width hero wants a landscape image: the TMDB backdrop when the
+// title has one, otherwise the existing poster treatment.
+function heroImage(item) {
+  if (item.backdrop_url) return `url('${item.backdrop_url}') center 25%/cover no-repeat, ${gradient(item.palette)}`;
+  return heroBackground(item);
+}
+
+// Plays a title straight from the hero: a movie's video, or a series' first
+// episode. Falls back to the detail modal when there's nothing to play yet.
+async function playTitle(id) {
+  const item = await api(`/titles/${id}`);
+  if (item.type === 'series') {
+    const episodes = await api(`/titles/${id}/episodes`);
+    const ep = episodes.find(e => e.video_url);
+    if (!ep) return openDetail(id);
+    return openPlayer({ video_url: ep.video_url, title: `${item.title} — S${ep.season_number}E${ep.episode_number}`, subtitles: ep.subtitles });
+  }
+  if (!item.video_url) return openDetail(id);
+  openPlayer(item);
+}
+
 async function renderHero() {
   const slot = document.getElementById('hero-slot');
   clearInterval(heroTimer);
-  const featured = await api('/titles/featured');
+  const [featured, topMovies, topSeries] = await Promise.all([
+    api('/titles/featured'),
+    api('/titles?type=movie&sort=rating'),
+    api('/titles?type=series&sort=rating'),
+  ]);
+  if (state.route !== 'home') return; // navigated away while loading
   if (!featured.length) { slot.innerHTML = ''; return; }
   let idx = 0;
   function paint() {
     const item = featured[idx];
+    const isSeries = item.type === 'series';
+    const rank = (isSeries ? topSeries : topMovies).findIndex(t => t.id === item.id) + 1;
+    const genres = (item.genre || '').split(/\s*[,/]\s*/).filter(Boolean);
+    const meta = [
+      item.rating ? `<span class="star">${starIcon()} ${Number(item.rating).toFixed(1)}</span>` : '',
+      item.year,
+      isSeries ? 'Series' : 'Movie',
+      ...genres,
+    ].filter(Boolean);
+    const badges = [
+      rank && rank <= 10 ? `<span class="badge-icon">TOP</span> #${rank} in ${isSeries ? 'shows' : 'movies'}` : '',
+      item.premium ? `<span class="badge-icon">★</span> Premium` : '',
+      isSeries && item.seasons ? `${item.seasons} season${item.seasons > 1 ? 's' : ''}` : (!isSeries && item.runtime ? item.runtime : ''),
+    ].filter(Boolean).slice(0, 2);
+
     slot.innerHTML = `
-      <div class="hero" style="background:${heroBackground(item)}">
+      <div class="hero">
+        <div class="hero-bg" style="background:${heroImage(item)}"></div>
         <div class="hero-content">
-          <div class="hero-eyebrow">Featured today</div>
           <div class="hero-title">${item.title.toUpperCase()}</div>
-          <div class="hero-meta">
-            <span class="tag">${item.year}</span>
-            <span class="tag">${item.genre}</span>
-            <span class="tag">${item.type === 'series' ? (item.seasons + ' season' + (item.seasons > 1 ? 's' : '')) : item.runtime}</span>
+          <div class="hero-meta">${meta.join('<span class="sep">·</span>')}</div>
+          <div class="hero-desc">${item.description || ''}</div>
+          <div class="hero-actions">
+            <div class="hero-btn hero-btn-play" id="hero-play">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></svg>
+              Play
+            </div>
+            <div class="hero-btn hero-btn-info" id="hero-info">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>
+              More info
+            </div>
           </div>
-          <div class="hero-desc">${item.description}</div>
         </div>
-        <div class="hero-dots">
-          ${featured.map((_, i) => `<span class="${i === idx ? 'active' : ''}" data-i="${i}"></span>`).join('')}
-        </div>
+        ${badges.length ? `<div class="hero-badges">${badges.map(b => `<div class="hero-badge">${b}</div>`).join('')}</div>` : ''}
+        ${featured.length > 1 ? `
+          <div class="hero-dots">
+            ${featured.map((_, i) => `<span class="${i === idx ? 'active' : ''}" data-i="${i}"></span>`).join('')}
+          </div>
+        ` : ''}
       </div>
     `;
     slot.querySelectorAll('.hero-dots span').forEach(dot => {
-      dot.addEventListener('click', (e) => {
-        e.stopPropagation();
+      dot.addEventListener('click', () => {
         idx = Number(dot.dataset.i);
         paint();
         resetTimer();
       });
     });
-    slot.querySelector('.hero').addEventListener('click', (e) => {
-      if (!e.target.closest('.hero-dots')) openDetail(item.id);
-    });
+    document.getElementById('hero-play').onclick = () => playTitle(item.id);
+    document.getElementById('hero-info').onclick = () => openDetail(item.id);
   }
   function advance() {
     idx = (idx + 1) % featured.length;
@@ -1123,6 +1168,31 @@ document.querySelectorAll('.nav-item[data-route]').forEach(item => {
     state.genre = '';
     render();
   });
+});
+
+document.querySelector('.topbar-logo').addEventListener('click', () => {
+  state.route = 'home';
+  state.genre = '';
+  render();
+});
+
+// The top bar sits transparently over the hero and turns solid once content
+// scrolls beneath it.
+const topbar = document.getElementById('topbar');
+const updateTopbar = () => topbar.classList.toggle('scrolled', window.scrollY > 40);
+window.addEventListener('scroll', updateTopbar, { passive: true });
+updateTopbar();
+
+// Search collapses to an icon in the nav pill; it opens on click and stays
+// open while it holds a query.
+const searchBox = document.getElementById('search');
+const searchInput = document.getElementById('search-input');
+searchBox.addEventListener('click', () => {
+  searchBox.classList.add('open');
+  searchInput.focus();
+});
+searchInput.addEventListener('blur', () => {
+  if (!searchInput.value) searchBox.classList.remove('open');
 });
 
 let searchTimer;
