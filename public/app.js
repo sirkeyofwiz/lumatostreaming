@@ -10,9 +10,31 @@ function gradient(seed) {
   const angle = 120 + (seed * 17) % 90;
   return `linear-gradient(${angle}deg, ${a}, ${b})`;
 }
-function posterBackground(item) {
-  if (item.poster_url) return `url('${item.poster_url}') center/cover no-repeat, ${gradient(item.palette)}`;
-  return gradient(item.palette);
+// Cards are ~150px wide, so TMDB's w342 posters are plenty (even on 2x
+// screens) and about half the download of the w500 ones stored on titles.
+function cardPosterUrl(url) {
+  return url ? url.replace('image.tmdb.org/t/p/w500/', 'image.tmdb.org/t/p/w342/') : url;
+}
+
+// Poster images load only as their card nears the screen; until then the
+// card shows its gradient. Without this, every row on the home page —
+// including all the genre rows far below — downloads its images at once.
+const posterObserver = 'IntersectionObserver' in window
+  ? new IntersectionObserver((entries, observer) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        const el = entry.target;
+        observer.unobserve(el);
+        el.style.background = `url('${el.dataset.poster}') center/cover no-repeat, ${el.style.background}`;
+      });
+    }, { rootMargin: '400px 200px' })
+  : null;
+
+function lazyLoadPosters(container) {
+  container.querySelectorAll('.poster[data-poster]').forEach((el) => {
+    if (posterObserver) posterObserver.observe(el);
+    else el.style.background = `url('${el.dataset.poster}') center/cover no-repeat, ${el.style.background}`;
+  });
 }
 function heroBackground(item) {
   // The hero banner and modal header are wide/landscape, but movie posters
@@ -349,7 +371,7 @@ function posterCard(item) {
     : `${item.year} · ${item.genre}`;
   return `
     <div class="card" data-id="${item.id}">
-      <div class="poster" style="background:${posterBackground(item)}">
+      <div class="poster" style="background:${gradient(item.palette)}"${item.poster_url ? ` data-poster="${cardPosterUrl(item.poster_url)}"` : ''}>
         ${badge}
         <div class="rating">${starIcon()}${item.rating.toFixed(1)}</div>
         <div class="watch-toggle ${item.in_watchlist ? 'on' : ''}" data-watch-id="${item.id}">
@@ -364,6 +386,7 @@ function posterCard(item) {
 }
 
 function attachCardHandlers(container) {
+  lazyLoadPosters(container);
   container.querySelectorAll('.watch-toggle').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -913,7 +936,13 @@ let heroTimer = null;
 // The full-width hero wants a landscape image: the TMDB backdrop when the
 // title has one, otherwise the existing poster treatment.
 function heroImage(item) {
-  if (item.backdrop_url) return `url('${item.backdrop_url}') center 25%/cover no-repeat, ${gradient(item.palette)}`;
+  if (item.backdrop_url) {
+    // Phones get TMDB's 780px backdrop instead of the stored 1280px one.
+    const url = window.innerWidth < 860
+      ? item.backdrop_url.replace('image.tmdb.org/t/p/w1280/', 'image.tmdb.org/t/p/w780/')
+      : item.backdrop_url;
+    return `url('${url}') center 25%/cover no-repeat, ${gradient(item.palette)}`;
+  }
   return heroBackground(item);
 }
 
@@ -931,15 +960,11 @@ async function playTitle(id) {
   openPlayer(item);
 }
 
-async function renderHero() {
+// topMovies / topSeries are the catalog sorted by rating, for the
+// "#N in movies" badge.
+function renderHero(featured, topMovies, topSeries) {
   const slot = document.getElementById('hero-slot');
   clearInterval(heroTimer);
-  const [featured, topMovies, topSeries] = await Promise.all([
-    api('/titles/featured'),
-    api('/titles?type=movie&sort=rating'),
-    api('/titles?type=series&sort=rating'),
-  ]);
-  if (state.route !== 'home') return; // navigated away while loading
   if (!featured.length) { slot.innerHTML = ''; return; }
   let idx = 0;
   function paint() {
@@ -1150,18 +1175,20 @@ async function render() {
 
   if (state.route === 'home') {
     filterBar.hidden = true;
-    renderHero();
-    if (!state.genres.length) state.genres = await api('/genres');
-
-    const [movies, series, newReleases, ...genreResults] = await Promise.all([
-      api('/titles?type=movie&sort=rating'),
-      api('/titles?type=series&sort=rating'),
-      api('/titles?sort=year'),
-      ...state.genres.map(g => api(`/titles?genre=${encodeURIComponent(g)}&sort=rating`)),
-    ]);
+    // The whole catalog is small, so the home page downloads it once and
+    // builds every row from it, instead of one request per row and genre —
+    // each request costs a full round trip to the server.
+    const all = await api('/titles?sort=year');
+    if (state.route !== 'home') return; // navigated away while loading
+    const byRating = [...all].sort((a, b) => b.rating - a.rating);
+    const movies = byRating.filter(t => t.type === 'movie');
+    const series = byRating.filter(t => t.type === 'series');
+    const newReleases = all;
+    if (!state.genres.length) state.genres = [...new Set(all.map(t => t.genre).filter(Boolean))].sort();
+    renderHero(all.filter(t => t.featured).sort((a, b) => a.id - b.id), movies, series);
 
     const genreSections = state.genres
-      .map((g, i) => ({ title: g, items: genreResults[i].slice(0, 14) }))
+      .map(g => ({ title: g, items: byRating.filter(t => t.genre === g).slice(0, 14) }))
       .filter(s => s.items.length > 0);
 
     const section = (title, items) => items.length ? `
@@ -1258,7 +1285,10 @@ document.getElementById('search-input').addEventListener('input', (e) => {
   }, 250);
 });
 
-refreshUser().then(render);
+// Sign-in state and page content load side by side; titles carry their
+// watchlist flags from the session cookie either way.
+refreshUser().then(() => { if (state.route === 'watchlist') render(); });
+render();
 resumePendingDownloads();
 
 if ('serviceWorker' in navigator) {
