@@ -100,7 +100,8 @@ function closeModal() {
 
 function clearModal() {
   document.getElementById('modal-root').innerHTML = '';
-  runModalCleanup();
+  runModalCleanup(); // saves the watching position before any update reload
+  if (updatePending) window.location.reload();
 }
 
 async function openPlayer(item) {
@@ -1609,10 +1610,40 @@ render();
 resumePendingDownloads();
 
 if ('serviceWorker' in navigator) {
+  // When a deploy ships a new service worker it takes over open pages right
+  // away (skipWaiting + clients.claim in sw.js); reloading then puts the new
+  // code on screen without the viewer having to close the site. The very
+  // first install also "takes over", so only reload if a worker was already
+  // in charge.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    reloadForUpdate();
+  });
+
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
+    navigator.serviceWorker.register('/sw.js').then((reg) => {
+      // A site left open (or an installed app) checks for a new version
+      // whenever it's brought back to the screen, not only on a fresh load.
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) reg.update().catch(() => {});
+      });
+    }).catch(() => {
       // Non-fatal — the site works fine without the service worker,
       // it just won't be installable/offline-capable.
     });
   });
+}
+
+// Never reload under someone mid-video or mid-form: with a pop-up open, the
+// update waits until it closes (see clearModal).
+let updatePending = false;
+function reloadForUpdate() {
+  if (document.getElementById('modal-root').innerHTML.trim()) {
+    updatePending = true;
+    return;
+  }
+  window.location.reload();
 }
