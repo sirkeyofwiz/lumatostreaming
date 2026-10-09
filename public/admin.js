@@ -124,8 +124,27 @@ function row(t) {
   `;
 }
 
+// Every word typed must appear somewhere in the title, genre, year or type,
+// so "action 2024" narrows to 2024 action titles. Case is ignored.
+function filteredTitles() {
+  const words = document.getElementById('admin-search').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const type = document.getElementById('admin-type-filter').value;
+  return titles.filter(t => {
+    if (type && t.type !== type) return false;
+    const haystack = `${t.title} ${t.genre} ${t.year} ${t.type}`.toLowerCase();
+    return words.every(w => haystack.includes(w));
+  });
+}
+
 function renderTable() {
-  document.getElementById('admin-rows').innerHTML = titles.map(row).join('');
+  const shown = filteredTitles();
+  const filtering = shown.length !== titles.length;
+  document.getElementById('admin-count').textContent = filtering
+    ? `${shown.length} of ${titles.length} titles`
+    : `${titles.length} titles`;
+  document.getElementById('admin-rows').innerHTML = shown.length
+    ? shown.map(row).join('')
+    : `<tr><td colspan="8" class="admin-empty">No titles match your search.</td></tr>`;
   document.querySelectorAll('[data-edit]').forEach(btn => {
     btn.onclick = () => openForm(titles.find(t => t.id === Number(btn.dataset.edit)));
   });
@@ -141,6 +160,10 @@ async function loadTitles() {
   titles = await api('/admin/titles');
   renderTable();
 }
+
+// The search stays applied when the table reloads after an edit or delete.
+document.getElementById('admin-search').addEventListener('input', renderTable);
+document.getElementById('admin-type-filter').addEventListener('change', renderTable);
 
 async function deleteTitle(id) {
   const t = titles.find(x => x.id === id);
