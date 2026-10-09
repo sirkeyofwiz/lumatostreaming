@@ -143,6 +143,18 @@ main{flex:1; min-width:0; padding:0 0 40px;}
 .watch-toggle.on svg{color:#06201c;}
 .card-title{font-size:13px; font-weight:600; margin-top:8px;}
 .card-sub{font-size:11.5px; color:var(--text-dim); margin-top:2px;}
+/* Continue watching: a play badge, a ✕ to drop the title, and how far in. */
+.continue-play{position:absolute; inset:0; margin:auto; z-index:3; width:42px; height:42px; border-radius:50%; background:rgba(0,0,0,.6); color:var(--gold); display:flex; align-items:center; justify-content:center; font-size:15px; opacity:.9; transition:transform .2s;}
+.continue-card:hover .continue-play{transform:scale(1.1);}
+.continue-remove{position:absolute; top:8px; right:8px; z-index:4; width:24px; height:24px; border-radius:50%; background:rgba(0,0,0,.6); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer;}
+.continue-remove svg{width:12px; height:12px;}
+.continue-remove:hover{background:var(--red);}
+.continue-progress{position:absolute; left:0; right:0; bottom:0; z-index:3; height:4px; background:rgba(255,255,255,.25);}
+.continue-progress div{height:100%; background:var(--gold);}
+.continue-card .poster-label{padding-bottom:14px;}
+.next-episode-btn{position:absolute; right:16px; bottom:64px; z-index:6; display:flex; align-items:center; gap:6px; padding:10px 16px; border-radius:22px; background:linear-gradient(135deg, var(--gold), #C9862C); color:#241706; font-size:14px; font-weight:700; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,.5);}
+.next-episode-btn[hidden]{display:none;}
+.next-episode-btn span{font-weight:600; opacity:.8;}
 .empty-state{color:var(--text-dim); font-size:14px; padding:40px 0; text-align:center;}
 
 /* ---------- Modal ---------- */

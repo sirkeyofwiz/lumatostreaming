@@ -64,6 +64,45 @@ function getVideoEmbed(url) {
   return { type: 'video', src: url };
 }
 
+// ---------- Pop-up windows and the Back button ----------
+// Every pop-up (title details, player, sign-in...) opens through showModal,
+// which adds one browser-history entry, so the phone's Back button closes
+// the pop-up instead of leaving the site. Opening a pop-up from another one
+// (details -> player) reuses that entry, so one Back always closes it.
+let modalCleanup = null;
+
+function runModalCleanup() {
+  const cleanup = modalCleanup;
+  modalCleanup = null;
+  if (cleanup) cleanup();
+}
+
+function showModal(html, onClose) {
+  const root = document.getElementById('modal-root');
+  runModalCleanup(); // the pop-up being replaced, if any
+  root.innerHTML = html;
+  modalCleanup = onClose || null;
+  if (!(history.state && history.state.modal)) {
+    history.pushState({ ...(history.state || {}), modal: true }, '');
+  }
+  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-backdrop')) closeModal();
+  });
+  return root;
+}
+
+// Closing goes through history when the pop-up has an entry, so Back and
+// the close button stay in step; the popstate handler does the clearing.
+function closeModal() {
+  if (history.state && history.state.modal) history.back();
+  else clearModal();
+}
+
+function clearModal() {
+  document.getElementById('modal-root').innerHTML = '';
+  runModalCleanup();
+}
+
 async function openPlayer(item) {
   if (item.offlineKey) {
     const offline = await getOfflineVideo(item.offlineKey).catch(() => null);
@@ -75,8 +114,7 @@ async function openPlayer(item) {
         ...s, src: URL.createObjectURL(new Blob([s.vtt], { type: 'text/vtt' })),
       }));
       const revokeAll = () => { URL.revokeObjectURL(objectUrl); offlineSubs.forEach(s => URL.revokeObjectURL(s.src)); };
-      const root = document.getElementById('modal-root');
-      root.innerHTML = `
+      showModal(`
         <div class="modal-backdrop">
           <div class="modal" style="max-width:900px; width:100%; background:#000; padding:0;">
             <div style="position:relative; width:100%; aspect-ratio:16/9;">
@@ -85,11 +123,8 @@ async function openPlayer(item) {
             </div>
           </div>
         </div>
-      `;
-      root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
-        if (e.target.classList.contains('modal-backdrop')) { root.innerHTML = ''; revokeAll(); }
-      });
-      document.getElementById('player-close').onclick = () => { root.innerHTML = ''; revokeAll(); };
+      `, revokeAll);
+      document.getElementById('player-close').onclick = closeModal;
       return;
     }
   }
@@ -99,24 +134,190 @@ async function openPlayer(item) {
     showToast('No video linked for this title yet.');
     return;
   }
-  const root = document.getElementById('modal-root');
   const playerEl = embed.type === 'iframe'
     ? `<iframe src="${embed.src}" allow="autoplay; fullscreen" allowfullscreen style="position:absolute; inset:0; width:100%; height:100%; border:0;"></iframe>`
     : `<video src="${embed.src}" controls autoplay crossorigin="anonymous" style="position:absolute; inset:0; width:100%; height:100%; background:#000;">${buildSubtitleTracks(item.subtitles)}</video>`;
-  root.innerHTML = `
+  // Watch progress only works for direct video files; YouTube/Vimeo embeds
+  // don't report their playback position to the page.
+  const tracked = embed.type === 'video' && item.watch;
+  const nextItem = tracked ? nextEpisodeItem(item.watch) : null;
+  let tracker = null;
+  const root = showModal(`
     <div class="modal-backdrop">
       <div class="modal" style="max-width:900px; width:100%; background:#000; padding:0;">
         <div style="position:relative; width:100%; aspect-ratio:16/9;">
           <div class="modal-close" id="player-close" style="z-index:5;">${closeIcon()}</div>
           ${playerEl}
+          ${nextItem ? `<div class="next-episode-btn" id="next-episode-btn" hidden>Next episode <span>${nextItem.watch.label}</span> ▶</div>` : ''}
         </div>
       </div>
     </div>
-  `;
-  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
+  `, () => {
+    if (tracker) tracker.save();
+    refreshContinueRow();
   });
-  document.getElementById('player-close').onclick = () => root.innerHTML = '';
+  document.getElementById('player-close').onclick = closeModal;
+  if (tracked) tracker = trackProgress(root.querySelector('video'), item, nextItem);
+}
+
+// ---------- Continue watching ----------
+// Where each viewer stopped is kept in this browser's storage, one entry per
+// title: { titleId, episodeId, label, video_url, subtitles, title, position,
+// duration, upNext, updatedAt }. upNext means the episode before it was
+// finished, so this one starts from the beginning.
+const PROGRESS_KEY = 'lumato-progress';
+
+function loadProgress() {
+  try { return JSON.parse(localStorage.getItem(PROGRESS_KEY)) || {}; } catch { return {}; }
+}
+function saveProgressStore(store) {
+  try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(store)); } catch {}
+}
+
+function formatTime(seconds) {
+  const s = Math.floor(seconds % 60), m = Math.floor(seconds / 60) % 60, h = Math.floor(seconds / 3600);
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+// A playable item for one episode, carrying what the player needs to save
+// progress and find the next episode.
+function episodePlayItem(show, episodes, index) {
+  const ep = episodes[index];
+  const label = `S${ep.season_number}E${ep.episode_number}`;
+  return {
+    video_url: ep.video_url,
+    title: `${show.title} — ${label}`,
+    subtitles: ep.subtitles,
+    watch: { titleId: show.id, episodeId: ep.id, label, show: { id: show.id, title: show.title }, episodes, index },
+  };
+}
+
+function nextEpisodeItem(watch) {
+  if (!watch.episodes) return null;
+  const nextIndex = watch.episodes.findIndex((e, i) => i > watch.index && e.video_url);
+  return nextIndex < 0 ? null : episodePlayItem(watch.show, watch.episodes, nextIndex);
+}
+
+function progressEntry(item) {
+  const w = item.watch;
+  return {
+    titleId: w.titleId,
+    episodeId: w.episodeId || null,
+    label: w.label || '',
+    video_url: item.video_url,
+    title: item.title,
+    subtitles: (item.subtitles || []).map(s => ({ id: s.id, label: s.label, lang_code: s.lang_code })),
+  };
+}
+
+// Watching 95% counts as finished: a finished movie leaves Continue
+// watching, a finished episode hands its place to the next one.
+function recordProgress(item, position, duration, nextItem) {
+  const store = loadProgress();
+  const id = item.watch.titleId;
+  if (position >= duration * 0.95) {
+    if (nextItem) store[id] = { ...progressEntry(nextItem), position: 0, duration: 0, upNext: true, updatedAt: Date.now() };
+    else delete store[id];
+  } else {
+    store[id] = { ...progressEntry(item), position, duration, upNext: false, updatedAt: Date.now() };
+  }
+  saveProgressStore(store);
+}
+
+function trackProgress(video, item, nextItem) {
+  const saved = loadProgress()[item.watch.titleId];
+  if (saved && !saved.upNext && saved.episodeId === (item.watch.episodeId || null) && saved.position > 10) {
+    video.addEventListener('loadedmetadata', () => {
+      if (saved.position < video.duration - 30) {
+        video.currentTime = saved.position;
+        showToast(`Resuming from ${formatTime(saved.position)}`);
+      }
+    }, { once: true });
+  }
+  const save = () => {
+    // Skip until playback has really started, so opening and closing the
+    // player straight away doesn't wipe a saved position.
+    if (!video.duration || !isFinite(video.duration) || video.currentTime < 1) return;
+    recordProgress(item, video.currentTime, video.duration, nextItem);
+  };
+  const nextBtn = document.getElementById('next-episode-btn');
+  let lastSave = 0;
+  video.addEventListener('timeupdate', () => {
+    if (Date.now() - lastSave > 5000) { lastSave = Date.now(); save(); }
+    if (nextBtn && video.duration - video.currentTime <= 20) nextBtn.hidden = false;
+  });
+  video.addEventListener('pause', save);
+  video.addEventListener('ended', () => { save(); if (nextBtn) nextBtn.hidden = false; });
+  if (nextBtn) nextBtn.onclick = () => openPlayer(nextItem);
+  return { save };
+}
+
+// Starts a title the way a viewer expects: where they stopped, the episode
+// after the one they finished, or from the start.
+function startTitle(item, episodes) {
+  const saved = loadProgress()[item.id];
+  if (item.type === 'series') {
+    let index = saved ? episodes.findIndex(e => e.id === saved.episodeId && e.video_url) : -1;
+    if (index < 0) index = episodes.findIndex(e => e.video_url);
+    if (index < 0) { showToast('No episodes to play yet.'); return; }
+    return openPlayer(episodePlayItem(item, episodes, index));
+  }
+  openPlayer({ ...item, watch: { titleId: item.id, label: '' } });
+}
+
+function playButtonLabel(item, episodes) {
+  const saved = loadProgress()[item.id];
+  if (item.type === 'series') {
+    const ep = saved && episodes.find(e => e.id === saved.episodeId && e.video_url);
+    if (ep) return `${saved.upNext ? 'Play' : 'Resume'} S${ep.season_number}E${ep.episode_number}`;
+    return episodes.length ? `Play S${episodes[0].season_number}E${episodes[0].episode_number}` : 'Play';
+  }
+  return saved ? 'Resume' : 'Play';
+}
+
+let homeCatalog = null; // the catalog the home page was built from
+
+function continueCard(t, entry) {
+  const pct = entry.upNext || !entry.duration ? 0 : Math.min(100, Math.round((entry.position / entry.duration) * 100));
+  const minutesLeft = entry.duration ? Math.max(1, Math.round((entry.duration - entry.position) / 60)) : 0;
+  const sub = entry.upNext
+    ? `Up next · ${entry.label}`
+    : [entry.label, minutesLeft ? `${minutesLeft} min left` : ''].filter(Boolean).join(' · ');
+  return `
+    <div class="card continue-card" data-continue="${t.id}">
+      <div class="poster" style="background:${gradient(t.palette)}"${t.poster_url ? ` data-poster="${cardPosterUrl(t.poster_url)}"` : ''}>
+        <div class="continue-remove" data-remove="${t.id}" title="Remove from Continue watching">${closeIcon()}</div>
+        <div class="continue-play">▶</div>
+        <div class="poster-label">${t.title}</div>
+        <div class="continue-progress"><div style="width:${pct}%"></div></div>
+      </div>
+      <div class="card-title">${t.title}</div>
+      <div class="card-sub">${sub}</div>
+    </div>
+  `;
+}
+
+function continueRowHtml(catalog) {
+  const byId = new Map(catalog.map(t => [t.id, t]));
+  const entries = Object.values(loadProgress())
+    .filter(e => byId.has(e.titleId))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 14);
+  return `<div id="continue-row">${entries.length ? `
+    <div class="section">
+      <div class="section-head"><div class="section-title">Continue watching</div></div>
+      <div class="row">${entries.map(e => continueCard(byId.get(e.titleId), e)).join('')}</div>
+    </div>
+  ` : ''}</div>`;
+}
+
+// Redraws just the Continue watching row, e.g. after closing the player.
+function refreshContinueRow() {
+  const row = document.getElementById('continue-row');
+  if (!row || !homeCatalog || state.route !== 'home') return;
+  row.outerHTML = continueRowHtml(homeCatalog);
+  attachCardHandlers(document.getElementById('continue-row'));
 }
 function starIcon() {
   return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/></svg>`;
@@ -216,9 +417,8 @@ document.addEventListener('click', (e) => {
 });
 
 function openAuthModal(mode) {
-  const root = document.getElementById('modal-root');
   const isLogin = mode === 'login';
-  root.innerHTML = `
+  const root = showModal(`
     <div class="modal-backdrop">
       <div class="modal" style="max-width:380px;">
         <div class="modal-body">
@@ -240,10 +440,7 @@ function openAuthModal(mode) {
         </div>
       </div>
     </div>
-  `;
-  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
-  });
+  `);
   document.getElementById('auth-switch').onclick = () => openAuthModal(isLogin ? 'register' : 'login');
   if (isLogin) {
     document.getElementById('auth-forgot').onclick = () => openForgotPassword();
@@ -265,7 +462,7 @@ function openAuthModal(mode) {
       if (!res.ok) { errEl.textContent = data.error || 'Something went wrong.'; return; }
       state.user = data;
       renderTopbar();
-      root.innerHTML = '';
+      closeModal();
       showToast(isLogin ? `Welcome back, ${data.username}` : `Account created — welcome, ${data.username}`);
       if (state.route === 'watchlist') render();
     } catch (err) {
@@ -275,8 +472,7 @@ function openAuthModal(mode) {
 }
 
 function openAddEmail() {
-  const root = document.getElementById('modal-root');
-  root.innerHTML = `
+  const root = showModal(`
     <div class="modal-backdrop">
       <div class="modal" style="max-width:380px;">
         <div class="modal-body">
@@ -290,10 +486,7 @@ function openAddEmail() {
         </div>
       </div>
     </div>
-  `;
-  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
-  });
+  `);
   document.getElementById('add-email-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = new FormData(e.target).get('email');
@@ -301,7 +494,7 @@ function openAddEmail() {
     try {
       const updated = await api('/auth/email', { method: 'PUT', body: JSON.stringify({ email }) });
       state.user = updated;
-      root.innerHTML = '';
+      closeModal();
       renderTopbar();
       showToast('Recovery email added');
     } catch (err) {
@@ -311,8 +504,7 @@ function openAddEmail() {
 }
 
 function openForgotPassword() {
-  const root = document.getElementById('modal-root');
-  root.innerHTML = `
+  const root = showModal(`
     <div class="modal-backdrop">
       <div class="modal" style="max-width:380px;">
         <div class="modal-body">
@@ -325,10 +517,7 @@ function openForgotPassword() {
         </div>
       </div>
     </div>
-  `;
-  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
-  });
+  `);
   document.getElementById('forgot-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = new FormData(e.target).get('email');
@@ -397,8 +586,22 @@ function attachCardHandlers(container) {
       toggleWatchlist(id, isOn, btn);
     });
   });
-  container.querySelectorAll('.card').forEach(card => {
+  container.querySelectorAll('.card:not(.continue-card)').forEach(card => {
     card.addEventListener('click', () => openDetail(card.dataset.id));
+  });
+  // Continue watching cards play straight away; their ✕ drops the title
+  // from the row.
+  container.querySelectorAll('.continue-card').forEach(card => {
+    card.addEventListener('click', () => playTitle(card.dataset.continue));
+  });
+  container.querySelectorAll('.continue-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const store = loadProgress();
+      delete store[btn.dataset.remove];
+      saveProgressStore(store);
+      refreshContinueRow();
+    });
   });
 }
 
@@ -906,7 +1109,7 @@ async function openDetail(id) {
   const mainOfflineKey = episodes.length ? `episode-${episodes[0].id}` : `title-${item.id}`;
   const showDownload = isDirectFile(mainVideoUrl);
 
-  root.innerHTML = `
+  showModal(`
     <div class="modal-backdrop">
       <div class="modal">
         <div class="modal-hero" style="background:${heroBackground(item)}">
@@ -920,7 +1123,7 @@ async function openDetail(id) {
           <div class="modal-row"><span class="label">${item.type === 'series' ? 'Creator' : 'Director'}</span><span>${item.director}</span></div>
           <div class="modal-row"><span class="label">Rating</span><span>${item.rating.toFixed(1)} / 10</span></div>
           <div class="modal-actions">
-            <div class="btn btn-gold" id="modal-play">${episodes.length ? `Play S${episodes[0].season_number}E${episodes[0].episode_number}` : 'Play'}</div>
+            <div class="btn btn-gold" id="modal-play">${playButtonLabel(item, episodes)}</div>
                         ${showDownload ? offlineButtonHtml(mainOfflineKey, 'btn btn-outline', 'id="modal-download"') : ''}
             <div class="btn btn-outline ${item.in_watchlist ? 'on' : ''}" id="modal-watch">
               ${item.in_watchlist ? 'In watchlist' : 'Add to watchlist'}
@@ -930,15 +1133,9 @@ async function openDetail(id) {
         </div>
       </div>
     </div>
-  `;
-  document.getElementById('modal-close').onclick = () => root.innerHTML = '';
-  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal-backdrop')) root.innerHTML = '';
-  });
-  document.getElementById('modal-play').onclick = () => {
-    if (episodes.length) openPlayer({ video_url: episodes[0].video_url, title: `${item.title} — S${episodes[0].season_number}E${episodes[0].episode_number}`, subtitles: episodes[0].subtitles });
-    else openPlayer(item);
-  };
+  `);
+  document.getElementById('modal-close').onclick = closeModal;
+  document.getElementById('modal-play').onclick = () => startTitle(item, episodes);
    const downloadBtn = document.getElementById('modal-download');
   if (downloadBtn) {
     const mainSubtitles = episodes.length ? episodes[0].subtitles : item.subtitles;
@@ -946,8 +1143,9 @@ async function openDetail(id) {
   }
   root.querySelectorAll('.episode-card-thumb').forEach(thumb => {
     thumb.addEventListener('click', () => {
-      const ep = episodes.find(e => String(e.id) === thumb.dataset.epId);
-      openPlayer({ video_url: thumb.dataset.video, title: thumb.dataset.title, subtitles: ep && ep.subtitles });
+      const index = episodes.findIndex(e => String(e.id) === thumb.dataset.epId);
+      if (!episodes[index].video_url) { showToast('No video linked for this episode yet.'); return; }
+      openPlayer(episodePlayItem(item, episodes, index));
     });
   });
   setupEpisodePreviews(root);
@@ -983,18 +1181,15 @@ function heroImage(item) {
   return heroBackground(item);
 }
 
-// Plays a title straight from the hero: a movie's video, or a series' first
-// episode. Falls back to the detail modal when there's nothing to play yet.
+// Plays a title straight away (from the hero or Continue watching), resuming
+// where the viewer stopped. Falls back to the detail modal when there's
+// nothing to play yet.
 async function playTitle(id) {
   const item = await api(`/titles/${id}`);
-  if (item.type === 'series') {
-    const episodes = await api(`/titles/${id}/episodes`);
-    const ep = episodes.find(e => e.video_url);
-    if (!ep) return openDetail(id);
-    return openPlayer({ video_url: ep.video_url, title: `${item.title} — S${ep.season_number}E${ep.episode_number}`, subtitles: ep.subtitles });
-  }
-  if (!item.video_url) return openDetail(id);
-  openPlayer(item);
+  const episodes = item.type === 'series' ? await api(`/titles/${id}/episodes`) : [];
+  const playable = item.type === 'series' ? episodes.some(e => e.video_url) : !!item.video_url;
+  if (!playable) return openDetail(id);
+  startTitle(item, episodes);
 }
 
 // topMovies / topSeries are the catalog sorted by rating, for the
@@ -1218,6 +1413,7 @@ async function render() {
     // each request costs a full round trip to the server.
     const all = await api('/titles?sort=year');
     if (state.route !== 'home') return; // navigated away while loading
+    homeCatalog = all;
     const byRating = [...all].sort((a, b) => b.rating - a.rating);
     const movies = byRating.filter(t => t.type === 'movie');
     const series = byRating.filter(t => t.type === 'series');
@@ -1237,6 +1433,7 @@ async function render() {
     ` : '';
 
     content.innerHTML = [
+      continueRowHtml(all),
       section('Popular movies', movies),
       section('Popular series', series),
       section('New releases', newReleases.slice(0, 14)),
@@ -1297,26 +1494,6 @@ async function render() {
   attachCardHandlers(content);
 }
 
-document.querySelectorAll('.nav-item[data-route]').forEach(item => {
-  item.addEventListener('click', () => {
-    state.route = item.dataset.route;
-    state.genre = '';
-    render();
-  });
-});
-
-document.querySelector('.topbar-logo').addEventListener('click', () => {
-  state.route = 'home';
-  state.genre = '';
-  render();
-});
-
-// The top bar sits transparently over the hero and turns solid once content
-// scrolls beneath it.
-const topbar = document.getElementById('topbar');
-const updateTopbar = () => topbar.classList.toggle('scrolled', window.scrollY > 40);
-window.addEventListener('scroll', updateTopbar, { passive: true });
-updateTopbar();
 
 // Search collapses to an icon in the nav pill; it opens on click and stays
 // open while it holds a query.
@@ -1330,6 +1507,74 @@ searchInput.addEventListener('blur', () => {
   if (!searchInput.value) searchBox.classList.remove('open');
 });
 
+// ---------- Page history ----------
+// Each page has its own address (#movies, #shows...) and history entry, so
+// Back/Forward move between pages and a refresh stays on the same page.
+const ROUTE_HASH = {
+  home: '',
+  movie: 'movies',
+  series: 'shows',
+  watchlist: 'watchlist',
+  downloads: 'downloads',
+  'Movie zilizotafsiriwa': 'swahili',
+  search: 'search',
+};
+
+function routeUrl(route) {
+  if (route === 'search') return `#search?q=${encodeURIComponent(state.query)}`;
+  return ROUTE_HASH[route] ? `#${ROUTE_HASH[route]}` : location.pathname;
+}
+
+function routeFromLocation() {
+  const [hash, params] = location.hash.slice(1).split('?');
+  const route = Object.keys(ROUTE_HASH).find(r => ROUTE_HASH[r] && ROUTE_HASH[r] === hash) || 'home';
+  const query = route === 'search' ? (new URLSearchParams(params).get('q') || '').trim() : '';
+  return route === 'search' && !query ? { route: 'home', query: '' } : { route, query };
+}
+
+// Puts the search box in step with the page being shown.
+function syncSearchBox() {
+  searchInput.value = state.query;
+  searchBox.classList.toggle('open', !!state.query);
+}
+
+function navigate(route) {
+  state.genre = '';
+  if (route !== state.route) {
+    // Leaving the search results page ends that search.
+    if (state.route === 'search') { state.query = ''; syncSearchBox(); }
+    state.route = route;
+    history.pushState({ route }, '', routeUrl(route));
+  }
+  render();
+}
+
+window.addEventListener('popstate', (e) => {
+  // Back with a pop-up open closes the pop-up and stays on the page.
+  if (document.getElementById('modal-root').innerHTML.trim()) clearModal();
+  const target = e.state && e.state.route ? { route: e.state.route, query: e.state.route === 'search' ? routeFromLocation().query : '' } : routeFromLocation();
+  if (target.route === state.route && target.query === state.query) return;
+  state.route = target.route;
+  state.query = target.query;
+  state.genre = '';
+  syncSearchBox();
+  render();
+});
+
+document.querySelectorAll('.nav-item[data-route]').forEach(item => {
+  item.addEventListener('click', () => navigate(item.dataset.route));
+});
+
+document.querySelector('.topbar-logo').addEventListener('click', () => navigate('home'));
+
+// The top bar sits transparently over the hero and turns solid once content
+// scrolls beneath it.
+const topbar = document.getElementById('topbar');
+const updateTopbar = () => topbar.classList.toggle('scrolled', window.scrollY > 40);
+window.addEventListener('scroll', updateTopbar, { passive: true });
+updateTopbar();
+
+
 let searchTimer;
 document.getElementById('search-input').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
@@ -1337,14 +1582,28 @@ document.getElementById('search-input').addEventListener('input', (e) => {
     state.query = e.target.value.trim();
     // From home, search everything (movies and shows); on the Movies or
     // Shows pages it narrows that page. Clearing it returns home.
-    if (state.query && state.route === 'home') state.route = 'search';
-    if (!state.query && state.route === 'search') state.route = 'home';
+    // The results page gets one history entry; further typing updates its
+    // address in place.
+    if (state.query && state.route === 'home') {
+      state.route = 'search';
+      history.pushState({ route: 'search' }, '', routeUrl('search'));
+    } else if (state.route === 'search') {
+      if (!state.query) state.route = 'home';
+      history.replaceState({ route: state.route }, '', routeUrl(state.route));
+    }
     render();
   }, 250);
 });
 
 // Sign-in state and page content load side by side; titles carry their
 // watchlist flags from the session cookie either way.
+// Open the page the address points at (e.g. after a refresh on #movies).
+const initial = routeFromLocation();
+state.route = initial.route;
+state.query = initial.query;
+syncSearchBox();
+history.replaceState({ route: state.route }, '', routeUrl(state.route));
+
 refreshUser().then(() => { if (state.route === 'watchlist') render(); });
 render();
 resumePendingDownloads();
