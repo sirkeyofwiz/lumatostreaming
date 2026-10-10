@@ -4,3 +4,5 @@ reelhouse.db-shm
 reelhouse.db-wal
 server.log
 .env
+# Promo videos — large binary files, kept out of the repo
+marketing/
