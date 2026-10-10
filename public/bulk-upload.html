@@ -23,6 +23,9 @@
   .bulk-status{font-size:11.5px; color:var(--text-dim);}
   .bulk-status.done{color:var(--teal);}
   .bulk-status.error{color:var(--red);}
+  .bulk-match.dupe{background:rgba(226,84,75,.15); color:var(--red);}
+  .bulk-warn{font-size:11px; color:var(--gold); margin-top:3px;}
+  #upload-all-btn.is-busy{opacity:.6; pointer-events:none;}
 </style>
 </head>
 <body class="admin-body">
@@ -98,37 +101,83 @@ function showToast(msg) {
 }
 
 function parseEpisodeInfo(filename) {
-  const name = filename.replace(/\.[^/.]+$/, '');
+  // Strip things that look like numbers but aren't episode numbers first:
+  // [group]/(source) tags, resolutions (1920x1080, 1080p), codecs (x264,
+  // H.265), bit depth and years — otherwise "1920x1080" reads as S20E108.
+  const name = filename
+    .replace(/\.[^/.]+$/, '')
+    .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+    .replace(/\b\d{3,4}\s*x\s*\d{3,4}\b/gi, ' ')
+    .replace(/\b\d{3,4}[pi]\b/gi, ' ')
+    .replace(/\b(?:[xh]\.?26[45]|hevc|avc|10bit|8bit|aac|ddp?\d?\.?\d?)\b/gi, ' ')
+    .replace(/\b(?:19|20)\d{2}\b/g, ' ')
+    .replace(/[._]/g, ' ')
+    .trim();
   let m;
-  if (m = name.match(/S(\d{1,2})E(\d{1,3})/i)) return { season: +m[1], episode: +m[2] };
-  if (m = name.match(/(\d{1,2})x(\d{1,3})/i)) return { season: +m[1], episode: +m[2] };
-  if (m = name.match(/season\s*(\d{1,2}).*?ep(?:isode)?\.?\s*(\d{1,3})/i)) return { season: +m[1], episode: +m[2] };
-  if (m = name.match(/第\s*(\d{1,4})\s*[话集]/)) return { season: 1, episode: +m[1] };
-  if (m = name.match(/\bep(?:isode)?\.?\s*(\d{1,3})\b/i)) return { season: 1, episode: +m[1] };
-  if (m = name.match(/[\s\-_](\d{1,3})[\s\-_]*$/)) return { season: 1, episode: +m[1] };
+  if (m = name.match(/S(\d{1,2})\s*E(\d{1,4})/i)) return { season: +m[1], episode: +m[2] };
+  if (m = name.match(/\b(\d{1,2})x(\d{1,3})\b/i)) return { season: +m[1], episode: +m[2] };
+  if (m = name.match(/season\s*(\d{1,2}).*?ep(?:isode)?\s*(\d{1,4})/i)) return { season: +m[1], episode: +m[2] };
+  if (m = name.match(/第\s*(\d{1,4})\s*[话話集]/)) return { season: 1, episode: +m[1] };
+  if (m = name.match(/\bep(?:isode)?\s*(\d{1,4})\b/i)) return { season: 1, episode: +m[1] };
+  if (m = name.match(/\bE(\d{1,4})\b/)) return { season: 1, episode: +m[1] };
+  if (m = name.match(/(?:^|[\s\-])(\d{1,4})\s*(?:v\d)?\s*$/i)) return { season: 1, episode: +m[1] };
+  if (m = name.match(/\s-\s*(\d{1,4})\b/)) return { season: 1, episode: +m[1] };
   return null;
 }
 
+// Browsers often report no type for .mkv and friends; the upload needs one.
+const VIDEO_TYPES = { mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mkv: 'video/x-matroska', mov: 'video/quicktime', avi: 'video/x-msvideo', ts: 'video/mp2t' };
+function videoType(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  return file.type || VIDEO_TYPES[ext] || '';
+}
+// MP4 and WebM play in every browser; the others often don't.
+function playsInBrowsers(file) {
+  return /\.(mp4|m4v|webm)$/i.test(file.name);
+}
+
+// One upload attempt: get a fresh signed URL, then PUT the file straight to R2.
 async function uploadFileToR2(file, onProgress) {
+  const contentType = videoType(file);
   const presign = await api('/admin/uploads/presign', {
     method: 'POST',
-    body: JSON.stringify({ filename: file.name, contentType: file.type, kind: 'video' }),
+    body: JSON.stringify({ filename: file.name, contentType, kind: 'video' }),
   });
   await new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', presign.uploadUrl);
-    xhr.setRequestHeader('Content-Type', file.type);
+    xhr.setRequestHeader('Content-Type', contentType);
     xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100)); };
     xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload failed (${xhr.status})`));
-    xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+    xhr.onerror = () => reject(Object.assign(new Error('Upload failed — network error.'), { network: true }));
     xhr.send(file);
   });
   return presign.publicUrl;
 }
 
+// A dropped connection retries the file (twice, after a short pause) rather
+// than failing it on the first hiccup.
+async function uploadWithRetry(file, onProgress, onRetry) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await uploadFileToR2(file, onProgress);
+    } catch (err) {
+      if (!err.network || attempt > 2) throw err;
+      onRetry(attempt);
+      await new Promise(r => setTimeout(r, 3000 * attempt));
+    }
+  }
+}
+
 let selectedSeries = null;
 let existingEpisodes = [];
 let rows = [];
+let uploading = false;
+
+// Leaving the page cancels uploads in progress, so ask first.
+window.addEventListener('beforeunload', (e) => {
+  if (uploading) { e.preventDefault(); e.returnValue = ''; }
+});
 
 async function init() {
   const gate = document.getElementById('gate');
@@ -152,6 +201,7 @@ async function init() {
   });
 
   select.addEventListener('change', async () => {
+    if (uploading) return;
     if (!select.value) { document.getElementById('upload-section').hidden = true; return; }
     selectedSeries = series.find(s => String(s.id) === select.value);
     existingEpisodes = await api(`/titles/${selectedSeries.id}/episodes`);
@@ -161,12 +211,15 @@ async function init() {
   });
 
   document.getElementById('file-input').addEventListener('change', (e) => {
+    if (uploading) return;
     const files = Array.from(e.target.files);
     if (!files.length) return;
     rows = files.map(file => {
       const guess = parseEpisodeInfo(file.name);
-      return { file, season: guess ? guess.season : 1, episode: guess ? guess.episode : '', progress: 0, status: '' };
+      return { file, season: guess ? guess.season : 1, episode: guess ? guess.episode : '', progress: 0, status: '', done: false };
     });
+    // Natural episode order, however the files were picked.
+    rows.sort((a, b) => (a.season - b.season) || ((a.episode || 1e9) - (b.episode || 1e9)));
     renderRows();
     document.getElementById('table-wrap').hidden = false;
   });
@@ -174,21 +227,45 @@ async function init() {
   document.getElementById('upload-all-btn').addEventListener('click', uploadAll);
 }
 
-function matchInfo(row) {
+// Rows that point at the same season + episode as another row.
+function duplicateKeys() {
+  const seen = new Map();
+  for (const r of rows) {
+    if (!r.episode) continue;
+    const k = `${Number(r.season)}-${Number(r.episode)}`;
+    seen.set(k, (seen.get(k) || 0) + 1);
+  }
+  return new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));
+}
+
+function matchInfo(row, dupes = duplicateKeys()) {
   if (!row.episode) return { label: 'Set episode #', cls: 'create' };
+  if (dupes.has(`${Number(row.season)}-${Number(row.episode)}`)) return { label: `Same as another file — fix S/E`, cls: 'dupe' };
   const existing = existingEpisodes.find(e => e.season_number === Number(row.season) && e.episode_number === Number(row.episode));
   return existing
     ? { label: `Update S${row.season}E${row.episode} — ${existing.name}`, cls: 'update' }
     : { label: `Create new S${row.season}E${row.episode}`, cls: 'create' };
 }
 
+function refreshMatches() {
+  const dupes = duplicateKeys();
+  document.querySelectorAll('#bulk-rows tr').forEach(tr => {
+    const m = matchInfo(rows[Number(tr.dataset.i)], dupes);
+    const el = tr.querySelector('[data-match]');
+    el.className = `bulk-match ${m.cls}`;
+    el.textContent = m.label;
+  });
+}
+
 function renderRows() {
   const tbody = document.getElementById('bulk-rows');
+  const dupes = duplicateKeys();
   tbody.innerHTML = rows.map((row, i) => {
-    const match = matchInfo(row);
+    const match = matchInfo(row, dupes);
+    const warn = playsInBrowsers(row.file) ? '' : `<div class="bulk-warn">May not play in browsers — MP4 recommended</div>`;
     return `
       <tr data-i="${i}">
-        <td class="bulk-filename" title="${row.file.name}">${row.file.name}</td>
+        <td class="bulk-filename" title="${row.file.name}">${row.file.name}${warn}</td>
         <td><input type="number" min="1" class="season-input" value="${row.season}" /></td>
         <td><input type="number" min="1" class="episode-input" value="${row.episode}" /></td>
         <td><span class="bulk-match ${match.cls}" data-match>${match.label}</span></td>
@@ -202,32 +279,55 @@ function renderRows() {
     const i = Number(tr.dataset.i);
     tr.querySelector('.season-input').addEventListener('input', (e) => {
       rows[i].season = Number(e.target.value) || 1;
-      tr.querySelector('[data-match]').outerHTML = `<span class="bulk-match ${matchInfo(rows[i]).cls}" data-match>${matchInfo(rows[i]).label}</span>`;
+      refreshMatches();
     });
     tr.querySelector('.episode-input').addEventListener('input', (e) => {
       rows[i].episode = e.target.value ? Number(e.target.value) : '';
-      tr.querySelector('[data-match]').outerHTML = `<span class="bulk-match ${matchInfo(rows[i]).cls}" data-match>${matchInfo(rows[i]).label}</span>`;
+      refreshMatches();
     });
   });
 }
 
+function setLocked(locked) {
+  uploading = locked;
+  const btn = document.getElementById('upload-all-btn');
+  btn.classList.toggle('is-busy', locked);
+  document.querySelectorAll('#bulk-rows input, #file-input, #series-select').forEach(el => { el.disabled = locked; });
+}
+
 async function uploadAll() {
+  if (uploading) return; // a second click while uploading would upload everything twice
   const missing = rows.filter(r => !r.episode);
   if (missing.length) {
     showToast(`${missing.length} file(s) still need an episode number filled in.`);
     return;
   }
-  document.getElementById('upload-all-btn').textContent = 'Uploading...';
+  if (duplicateKeys().size) {
+    showToast('Two files have the same season and episode — fix the highlighted rows first.');
+    return;
+  }
+  const todo = rows.filter(r => !r.done);
+  if (!todo.length) { showToast('Everything here is already uploaded.'); return; }
+
+  const btn = document.getElementById('upload-all-btn');
+  setLocked(true);
+  btn.textContent = 'Uploading...';
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
+    if (row.done) continue; // already uploaded in an earlier run
     const tr = document.querySelector(`tr[data-i="${i}"]`);
     const progressEl = tr.querySelector('[data-progress]');
     const statusEl = tr.querySelector('[data-status]');
     statusEl.textContent = 'Uploading...';
     statusEl.className = 'bulk-status';
     try {
-      const url = await uploadFileToR2(row.file, (pct) => { progressEl.style.width = pct + '%'; });
+      const url = await uploadWithRetry(
+        row.file,
+        (pct) => { progressEl.style.width = pct + '%'; },
+        (attempt) => { statusEl.textContent = `Connection dropped — retrying (${attempt}/2)...`; },
+      );
+      statusEl.textContent = 'Saving...';
       const existing = existingEpisodes.find(e => e.season_number === Number(row.season) && e.episode_number === Number(row.episode));
       if (existing) {
         await api(`/admin/episodes/${existing.id}`, { method: 'PUT', body: JSON.stringify({ video_url: url }) });
@@ -238,6 +338,8 @@ async function uploadAll() {
         });
         existingEpisodes.push(created);
       }
+      row.done = true;
+      progressEl.style.width = '100%';
       statusEl.textContent = 'Done';
       statusEl.className = 'bulk-status done';
     } catch (err) {
@@ -245,8 +347,11 @@ async function uploadAll() {
       statusEl.className = 'bulk-status error';
     }
   }
-  document.getElementById('upload-all-btn').textContent = 'Upload all';
-  showToast('Bulk upload finished — check the status column for any errors.');
+
+  setLocked(false);
+  const failed = rows.filter(r => !r.done).length;
+  btn.textContent = failed ? `Retry ${failed} failed` : 'Upload all';
+  showToast(failed ? `${failed} file(s) failed — click "Retry" to try just those again.` : 'All files uploaded.');
 }
 
 init();
