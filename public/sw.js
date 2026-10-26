@@ -1,10 +1,12 @@
 // Bump this on any deploy that changes cached files, so old caches get
 // cleared out and everyone picks up the new version automatically.
-const CACHE_VERSION = 'lumatostreaming-v20';
+const CACHE_VERSION = 'lumatostreaming-v21';
 
 const STATIC_ASSETS = [
   '/styles.css',
   '/app.js',
+  '/player.js',
+  '/player.css',
   '/admin.css',
   '/admin.js',
   '/manifest.json',

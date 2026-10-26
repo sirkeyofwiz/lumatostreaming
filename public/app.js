@@ -96,7 +96,10 @@ function showModal(html, onClose) {
   if (!(history.state && history.state.modal)) {
     history.pushState({ ...(history.state || {}), modal: true }, '');
   }
-  root.querySelector('.modal-backdrop').addEventListener('click', (e) => {
+  // Pop-ups close when the dimmed area around them is clicked (the
+  // full-screen player has no such area).
+  const backdrop = root.querySelector('.modal-backdrop');
+  if (backdrop) backdrop.addEventListener('click', (e) => {
     if (e.target.classList.contains('modal-backdrop')) closeModal();
   });
   return root;
@@ -115,69 +118,7 @@ function clearModal() {
   if (updatePending) window.location.reload();
 }
 
-async function openPlayer(item) {
-  if (item.offlineKey) {
-    const offline = await getOfflineVideo(item.offlineKey).catch(() => null);
-    if (offline) {
-      const objectUrl = URL.createObjectURL(offline.blob);
-      // Subtitles saved alongside the video are served from blob URLs, so
-      // they play without a network connection.
-      const offlineSubs = (offline.subtitles || []).map(s => ({
-        ...s, src: URL.createObjectURL(new Blob([s.vtt], { type: 'text/vtt' })),
-      }));
-      const revokeAll = () => { URL.revokeObjectURL(objectUrl); offlineSubs.forEach(s => URL.revokeObjectURL(s.src)); };
-      showModal(`
-        <div class="modal-backdrop">
-          <div class="modal" style="max-width:900px; width:100%; background:#000; padding:0;">
-            <div style="position:relative; width:100%; aspect-ratio:16/9;">
-              <div class="modal-close" id="player-close" style="z-index:5;">${closeIcon()}</div>
-              <video src="${objectUrl}" controls autoplay crossorigin="anonymous" style="position:absolute; inset:0; width:100%; height:100%; background:#000;">${buildSubtitleTracks(offlineSubs)}</video>
-            </div>
-          </div>
-        </div>
-      `, revokeAll);
-      document.getElementById('player-close').onclick = closeModal;
-      return;
-    }
-  }
-
-  const embed = getVideoEmbed(item.video_url);
-  if (!embed) {
-    showToast('No video linked for this title yet.');
-    return;
-  }
-  const playerEl = embed.type === 'iframe'
-    ? `<iframe src="${esc(embed.src)}" allow="autoplay; fullscreen" allowfullscreen style="position:absolute; inset:0; width:100%; height:100%; border:0;"></iframe>`
-    : `<video src="${esc(embed.src)}" controls autoplay crossorigin="anonymous" style="position:absolute; inset:0; width:100%; height:100%; background:#000;">${buildSubtitleTracks(item.subtitles)}</video>`;
-  // Watch progress only works for direct video files; YouTube/Vimeo embeds
-  // don't report their playback position to the page.
-  const tracked = embed.type === 'video' && item.watch;
-  const nextItem = tracked ? nextEpisodeItem(item.watch) : null;
-  let tracker = null;
-  const root = showModal(`
-    <div class="modal-backdrop">
-      <div class="modal" style="max-width:900px; width:100%; background:#000; padding:0;">
-        <div style="position:relative; width:100%; aspect-ratio:16/9;">
-          <div class="modal-close" id="player-close" style="z-index:5;">${closeIcon()}</div>
-          ${playerEl}
-          ${nextItem ? `<div class="next-episode-btn" id="next-episode-btn" hidden>Next episode <span>${esc(nextItem.watch.label)}</span> ▶</div>` : ''}
-        </div>
-      </div>
-    </div>
-  `, () => {
-    if (tracker) tracker.save();
-    refreshContinueRow();
-  });
-  document.getElementById('player-close').onclick = closeModal;
-  if (tracked) tracker = trackProgress(root.querySelector('video'), item, nextItem);
-  // Analytics: a play, and a failed play if the video can't load.
-  const ids = item.watch ? { title_id: item.watch.titleId, episode_id: item.watch.episodeId || undefined } : { title_id: item.id };
-  if (ids.title_id) {
-    trackEvent('play_start', ids);
-    const video = root.querySelector('video');
-    if (video) video.addEventListener('error', () => trackEvent('play_error', ids), { once: true });
-  }
-}
+// openPlayer() lives in player.js.
 
 // ---------- Continue watching ----------
 // Where each viewer stopped is kept in this browser's storage, one entry per
@@ -208,7 +149,11 @@ function episodePlayItem(show, episodes, index) {
     video_url: ep.video_url,
     title: `${show.title} — ${label}`,
     subtitles: ep.subtitles,
-    watch: { titleId: show.id, episodeId: ep.id, label, show: { id: show.id, title: show.title }, episodes, index },
+    watch: {
+      titleId: show.id, episodeId: ep.id, label, episodes, index,
+      // The player's header, poster and Episodes panel use these.
+      show: { id: show.id, title: show.title, backdrop_url: show.backdrop_url, poster_url: show.poster_url, description: show.description },
+    },
   };
 }
 
@@ -265,15 +210,12 @@ function trackProgress(video, item, nextItem) {
       trackEvent('play_complete', { title_id: item.watch.titleId, episode_id: item.watch.episodeId || undefined });
     }
   };
-  const nextBtn = document.getElementById('next-episode-btn');
   let lastSave = 0;
   video.addEventListener('timeupdate', () => {
     if (Date.now() - lastSave > 5000) { lastSave = Date.now(); save(); }
-    if (nextBtn && video.duration - video.currentTime <= 20) nextBtn.hidden = false;
   });
   video.addEventListener('pause', save);
-  video.addEventListener('ended', () => { save(); if (nextBtn) nextBtn.hidden = false; });
-  if (nextBtn) nextBtn.onclick = () => openPlayer(nextItem);
+  video.addEventListener('ended', save);
   return { save };
 }
 
