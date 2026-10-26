@@ -79,6 +79,41 @@ const sqliteSchema = `
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS admin_log_created_idx ON admin_log(created_at);
+
+  -- Devices that allowed notifications (web push). No names or emails:
+  -- the endpoint is an address the browser maker gives us.
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    user_id INTEGER,
+    visitor_id TEXT,
+    device TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- Every notification sent, for the admin Notifications page.
+  CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    url TEXT,
+    image TEXT,
+    title_id INTEGER,
+    sent INTEGER NOT NULL DEFAULT 0,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    opened INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- Small site-wide settings (notification keys, on/off switches).
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
 `;
 
 const pgSchema = `
@@ -162,6 +197,41 @@ const pgSchema = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
   CREATE INDEX IF NOT EXISTS admin_log_created_idx ON admin_log(created_at);
+
+  -- Devices that allowed notifications (web push). No names or emails:
+  -- the endpoint is an address the browser maker gives us.
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id SERIAL PRIMARY KEY,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    user_id INTEGER,
+    visitor_id TEXT,
+    device TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  -- Every notification sent, for the admin Notifications page.
+  CREATE TABLE IF NOT EXISTS notifications (
+    id SERIAL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    url TEXT,
+    image TEXT,
+    title_id INTEGER,
+    sent INTEGER NOT NULL DEFAULT 0,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    opened INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  -- Small site-wide settings (notification keys, on/off switches).
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
 `;
 
 // Columns added after the tables were first created. CREATE TABLE IF NOT

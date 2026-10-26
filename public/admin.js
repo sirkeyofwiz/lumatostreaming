@@ -668,7 +668,7 @@ async function openEpisodeManager(title) {
 }
 
 // ---------- Sections: the sidebar switches between them via the address (#users etc.) ----------
-const VIEWS = ['dashboard', 'analytics', 'catalog', 'missing', 'uploads', 'users', 'activity', 'health'];
+const VIEWS = ['dashboard', 'analytics', 'catalog', 'missing', 'uploads', 'users', 'notifications', 'activity', 'health'];
 let currentView = null;
 
 function showView() {
@@ -688,6 +688,7 @@ function showView() {
   if (view === 'users') renderUsers();
   if (view === 'analytics') renderAnalytics();
   if (view === 'uploads') renderUploads();
+  if (view === 'notifications') renderNotifications();
   if (view === 'activity') renderActivity();
   if (view === 'health') renderHealth();
 }
@@ -1113,6 +1114,9 @@ const ACTIONS = {
   'video.set': ['uploaded a video for', 'uploads', 'teal'],
   'user.reset_link': ['created a reset link for', 'users', 'blue'],
   'user.signup': ['signed up', 'users', 'teal'],
+  'notification.send': ['sent the notification', 'content', 'gold'],
+  'notification.test': ['sent a test notification', 'content', 'blue'],
+  'notification.auto': ['changed a setting:', 'content', 'blue'],
 };
 
 async function renderActivity() {
@@ -1204,6 +1208,269 @@ async function renderUploads() {
     const el = document.getElementById('uploads-todo');
     if (el) el.textContent = fmtNum(s.episodesMissingVideo + s.moviesMissingVideo);
   }).catch(() => {});
+}
+
+// ---------- Notifications ----------
+let pushData = null;
+let pushTitle = null; // the title the message is about, with real watch numbers
+
+// Ready-made messages. Each fills the title and message from the chosen
+// title; they're starting points to edit, not fixed text.
+const PUSH_IDEAS = [
+  {
+    key: 'trending', label: '🔥 Trending', needsTitle: true,
+    make: (t) => {
+      const n = t.watchers24h >= 3 ? t.watchers24h : t.watchers7d;
+      const when = t.watchers24h >= 3 ? 'today' : 'this week';
+      return {
+        title: `🔥 ${t.title} is trending`,
+        body: n >= 3 ? `${n} people watched it ${when}. Hop on before the spoilers find you!` : 'Everyone is talking about it. Hop on before the spoilers find you!',
+      };
+    },
+  },
+  {
+    key: 'friends', label: '👀 Friends are watching', needsTitle: true,
+    make: (t) => ({ title: `👀 Your friends are watching ${t.title}`, body: "Don't be the last one to know. Hop on and catch up tonight." }),
+  },
+  {
+    key: 'cliffhanger', label: '🕵️ Cliffhanger teaser', needsTitle: true,
+    make: (t) => {
+      const ep = t.latest;
+      return {
+        title: `🕵️ ${t.title}: the truth is about to come out`,
+        body: ep
+          ? `In ${ep.name ? `"${ep.name}"` : `episode ${ep.episode_number}`}, a secret is about to be uncovered. Will you be there when it happens? Check it out.`
+          : 'A secret is about to be uncovered. Will you be there when it happens? Check it out.',
+      };
+    },
+  },
+  {
+    key: 'episode', label: '🎬 New episode', needsTitle: true,
+    make: (t) => (t.latest
+      ? { title: `🎬 New episode: ${t.title}`, body: `S${t.latest.season_number} E${t.latest.episode_number}${t.latest.name ? ` · ${t.latest.name}` : ''} is now streaming. Tap to watch.` }
+      : { title: `🎬 Now streaming: ${t.title}`, body: 'Tap to start watching.' }),
+  },
+  {
+    key: 'weekend', label: '🍿 Weekend pick', needsTitle: true,
+    make: (t) => ({ title: `🍿 Your weekend pick: ${t.title}`, body: (t.description || 'Grab the popcorn, this one is worth it.').slice(0, 200) }),
+  },
+  {
+    key: 'comeback', label: '⏯️ Come back', needsTitle: false,
+    make: () => ({ title: '⏯️ Pick up where you left off', body: 'Your shows are waiting, and new episodes have landed since your last visit.' }),
+  },
+];
+
+async function renderNotifications() {
+  const body = document.getElementById('notifications-body');
+  try { pushData = await api('/admin/notifications'); } catch (e) {
+    body.innerHTML = `<div class="admin-loading">Couldn't load notifications: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (currentView !== 'notifications') return;
+  await ensureTitles();
+  if (currentView !== 'notifications') return;
+  updatePushBadge(pushData.subscribers);
+  syncPushSelfButton();
+
+  const d = pushData;
+  const manual = d.history.filter((h) => h.kind !== 'test');
+  const delivered = manual.reduce((s, h) => s + h.delivered, 0);
+  const opened = manual.reduce((s, h) => s + h.opened, 0);
+  const month = manual.filter((h) => Date.now() - new Date(h.created_at).getTime() < 30 * 864e5).length;
+  const playable = titles.slice().sort((a, b) => a.title.localeCompare(b.title));
+
+  body.innerHTML = `
+    <div class="admin-stats">
+      <div class="admin-stat"><span class="admin-stat-label">Devices that allowed notifications</span><span class="admin-stat-value is-gold">${fmtNum(d.subscribers)}</span><span class="admin-stat-note">${d.devices.length ? d.devices.map((x) => `${esc(x.device)} ${fmtNum(x.count)}`).join(' · ') : 'none yet'}</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">Sent in the last 30 days</span><span class="admin-stat-value">${fmtNum(month)}</span><span class="admin-stat-note">messages, including automatic ones</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">Opened</span><span class="admin-stat-value">${delivered ? `${Math.round((opened / delivered) * 100)}%` : '—'}</span><span class="admin-stat-note">${fmtNum(opened)} taps from ${fmtNum(delivered)} delivered</span></div>
+    </div>
+
+    <div class="admin-row">
+      <section class="admin-card admin-grow-2">
+        <h2>Write a notification</h2>
+        <p class="admin-card-sub">Goes to all ${plural(d.subscribers, 'device', 'devices')}. Pick a title to link it, then start from an idea or write your own.</p>
+        <form id="push-form" class="admin-form push-form" autocomplete="off">
+          <div>
+            <label for="push-title-pick">About a title (optional, tapping the notification opens it)</label>
+            <input id="push-title-pick" list="push-title-list" placeholder="Start typing a movie or series…" />
+            <datalist id="push-title-list">${playable.map((t) => `<option value="${esc(t.title)} (${t.type === 'series' ? 'Series' : 'Movie'} · ${esc(t.year)})"></option>`).join('')}</datalist>
+            <div id="push-title-facts" class="push-facts"></div>
+          </div>
+          <div>
+            <label>Ideas</label>
+            <div class="admin-chips push-ideas">${PUSH_IDEAS.map((i) => `<button type="button" class="admin-chip" data-idea="${i.key}">${esc(i.label)}</button>`).join('')}</div>
+          </div>
+          <div>
+            <label for="push-heading">Title <span class="push-count" id="push-heading-count">0/80</span></label>
+            <input id="push-heading" maxlength="80" placeholder="e.g. 🕵️ Wednesday is about to uncover the secret" required />
+          </div>
+          <div>
+            <label for="push-body">Message <span class="push-count" id="push-body-count">0/240</span></label>
+            <textarea id="push-body" maxlength="240" rows="3" placeholder="e.g. Who really killed Rowan? Find out tonight. Check it out." required></textarea>
+          </div>
+          <label class="admin-checkbox"><input type="checkbox" id="push-image" checked /> Show the title's picture (Android and computers)</label>
+          <div class="push-actions">
+            <button type="button" class="btn btn-outline" id="push-test">Send a test to my devices</button>
+            <button type="submit" class="btn btn-gold" id="push-send" ${d.subscribers ? '' : 'disabled'}>Send to all ${plural(d.subscribers, 'device', 'devices')}</button>
+          </div>
+          <p class="admin-muted push-note" id="push-status"></p>
+        </form>
+      </section>
+      <section class="admin-card admin-grow-1">
+        <h2>Preview</h2>
+        <p class="admin-card-sub">Roughly how it looks on a phone.</p>
+        <div class="push-preview" id="push-preview"></div>
+      </section>
+    </div>
+
+    <section class="admin-card">
+      <div class="push-auto">
+        <div>
+          <h2>Announce new episodes and movies automatically</h2>
+          <p class="admin-card-sub" style="margin:0;">When a video is added, everyone is told it's streaming. Uploads close together (like a whole season) wait 3 minutes and go out as one message.</p>
+        </div>
+        <button type="button" class="push-switch ${d.auto ? 'is-on' : ''}" id="push-auto" role="switch" aria-checked="${d.auto}" aria-label="Automatic notifications"><span></span></button>
+      </div>
+    </section>
+
+    <section class="admin-card admin-table-wrap">
+      <h2 style="padding:8px 0 4px;">Sent notifications</h2>
+      ${d.history.length ? `<table class="admin-table">
+        <thead><tr><th>When</th><th>Notification</th><th>Type</th><th>Delivered</th><th>Opened</th></tr></thead>
+        <tbody>${d.history.map((h) => `<tr>
+          <td style="white-space:nowrap;">${fmtDate(h.created_at)}<div class="admin-muted" style="font-size:12px;">${timeAgo(h.created_at)}</div></td>
+          <td><strong>${esc(h.title)}</strong><div class="admin-muted" style="font-size:12.5px;">${esc(h.body)}</div></td>
+          <td><span class="admin-tag">${h.kind === 'auto' ? 'Automatic' : h.kind === 'test' ? 'Test' : `By ${esc(h.created_by || 'admin')}`}</span></td>
+          <td>${fmtNum(h.delivered)} <span class="admin-muted">of ${fmtNum(h.sent)}</span></td>
+          <td>${fmtNum(h.opened)}</td>
+        </tr>`).join('')}</tbody></table>`
+        : '<p class="admin-muted" style="font-size:13px; padding-bottom:10px;">Nothing sent yet.</p>'}
+    </section>`;
+
+  wirePushForm(playable);
+}
+
+function wirePushForm(playable) {
+  const pick = document.getElementById('push-title-pick');
+  const heading = document.getElementById('push-heading');
+  const text = document.getElementById('push-body');
+  const imageBox = document.getElementById('push-image');
+  const status = document.getElementById('push-status');
+  const facts = document.getElementById('push-title-facts');
+
+  const drawPreview = () => {
+    document.getElementById('push-heading-count').textContent = `${heading.value.length}/80`;
+    document.getElementById('push-body-count').textContent = `${text.value.length}/240`;
+    const img = imageBox.checked && pushTitle && pushTitle.image;
+    document.getElementById('push-preview').innerHTML = `
+      <div class="push-mock">
+        <div class="push-mock-top"><img src="/icons/icon-192.png" alt="" /><span>LumatoStreaming</span><span class="admin-muted">· now</span></div>
+        <div class="push-mock-title">${esc(heading.value || 'Your title appears here')}</div>
+        <div class="push-mock-body">${esc(text.value || 'And your message here.')}</div>
+        ${img ? `<img class="push-mock-image" src="${esc(img)}" alt="" />` : ''}
+      </div>
+      <p class="admin-muted" style="font-size:12px; margin-top:10px;">Tapping it opens ${pushTitle ? `<strong>${esc(pushTitle.title)}</strong> in the player` : 'the home page'}.</p>`;
+  };
+
+  pick.addEventListener('change', async () => {
+    const t = playable.find((x) => `${x.title} (${x.type === 'series' ? 'Series' : 'Movie'} · ${x.year})` === pick.value);
+    pushTitle = null;
+    facts.innerHTML = '';
+    if (t) {
+      try {
+        pushTitle = await api(`/admin/notifications/title/${t.id}`);
+        facts.innerHTML = `
+          <span class="admin-tag">👀 ${plural(pushTitle.watchers24h, 'viewer', 'viewers')} today</span>
+          <span class="admin-tag">${plural(pushTitle.watchers7d, 'viewer', 'viewers')} this week</span>
+          ${pushTitle.latest ? `<span class="admin-tag">Latest: S${pushTitle.latest.season_number} E${pushTitle.latest.episode_number}${pushTitle.latest.name ? ` · ${esc(pushTitle.latest.name)}` : ''}</span>` : ''}`;
+      } catch (e) { showToast(e.message); }
+    }
+    drawPreview();
+  });
+
+  document.querySelectorAll('[data-idea]').forEach((chip) => {
+    chip.onclick = () => {
+      const idea = PUSH_IDEAS.find((i) => i.key === chip.dataset.idea);
+      if (idea.needsTitle && !pushTitle) { showToast('Pick a title first, then choose this idea.'); pick.focus(); return; }
+      const made = idea.make(pushTitle || {});
+      heading.value = made.title.slice(0, 80);
+      text.value = made.body.slice(0, 240);
+      drawPreview();
+    };
+  });
+  heading.oninput = drawPreview;
+  text.oninput = drawPreview;
+  imageBox.onchange = drawPreview;
+  drawPreview();
+
+  const sendIt = async (test) => {
+    if (!heading.value.trim() || !text.value.trim()) { showToast('Write a title and a message first.'); return; }
+    if (!test && !confirm(`Send this to all ${pushData.subscribers} devices now? This can't be undone.`)) return;
+    const btns = document.querySelectorAll('#push-test, #push-send');
+    btns.forEach((b) => { b.disabled = true; });
+    status.textContent = test ? 'Sending a test…' : 'Sending…';
+    try {
+      const r = await api('/admin/notifications', {
+        method: 'POST',
+        body: JSON.stringify({ title: heading.value, body: text.value, title_id: pushTitle ? pushTitle.id : null, image: imageBox.checked, test }),
+      });
+      if (test && !r.sent) {
+        status.textContent = 'This account has no devices with notifications on yet. Use "Get notifications on this device" above (or allow them on the main site while signed in), then test again.';
+      } else {
+        status.textContent = '';
+        showToast(test ? `Test sent to ${plural(r.delivered, 'device', 'devices')}` : `Sent to ${plural(r.delivered, 'device', 'devices')}`);
+        if (!test) renderNotifications();
+      }
+    } catch (e) {
+      status.textContent = `Couldn't send: ${e.message}`;
+    }
+    btns.forEach((b) => { b.disabled = false; });
+    if (!pushData.subscribers) document.getElementById('push-send').disabled = true;
+  };
+  document.getElementById('push-test').onclick = () => sendIt(true);
+  document.getElementById('push-form').onsubmit = (e) => { e.preventDefault(); sendIt(false); };
+
+  document.getElementById('push-auto').onclick = async (e) => {
+    const btn = e.currentTarget;
+    const on = !btn.classList.contains('is-on');
+    try {
+      await api('/admin/notifications/settings', { method: 'PUT', body: JSON.stringify({ auto: on }) });
+      btn.classList.toggle('is-on', on);
+      btn.setAttribute('aria-checked', String(on));
+      showToast(on ? 'New videos will be announced automatically' : 'Automatic announcements are off');
+    } catch (err) { showToast(err.message); }
+  };
+}
+
+function updatePushBadge(n) {
+  const badge = document.getElementById('nav-push-count');
+  badge.hidden = !n;
+  badge.textContent = fmtNum(n);
+}
+
+// Lets the admin receive notifications on this device, so tests reach them.
+function urlBase64ToUint8Array(base64) {
+  const pad = '='.repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+async function syncPushSelfButton() {
+  const btn = document.getElementById('push-self-btn');
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) { btn.hidden = true; return; }
+  const reg = await navigator.serviceWorker.register('/sw.js').catch(() => null);
+  const sub = reg && await reg.pushManager.getSubscription().catch(() => null);
+  btn.hidden = !!(sub && Notification.permission === 'granted');
+  btn.onclick = async () => {
+    try {
+      if (await Notification.requestPermission() !== 'granted') { showToast('Notifications are blocked in this browser\'s settings.'); return; }
+      const { publicKey } = await api('/push/key');
+      const s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
+      await api('/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: s.toJSON() }) });
+      showToast('Notifications are on for this device');
+      renderNotifications();
+    } catch (e) { showToast(`Couldn't turn on notifications: ${e.message}`); }
+  };
 }
 
 // ---------- System health ----------
@@ -1299,6 +1566,7 @@ async function init() {
   api('/admin/health').then((h) => {
     document.getElementById('nav-health-dot').hidden = h.database.ok && !h.errors.server24h && !h.errors.playback24h;
   }).catch(() => {});
+  api('/admin/notifications').then((n) => updatePushBadge(n.subscribers)).catch(() => {});
   api('/admin/uploads').then((u) => {
     const badge = document.getElementById('nav-uploads-failed');
     badge.hidden = !u.failed.length;

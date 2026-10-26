@@ -349,6 +349,7 @@ const trackEvent = (() => {
   try {
     if (sessionStorage.getItem('lumato-visit')) return;
     sessionStorage.setItem('lumato-visit', '1');
+    localStorage.setItem('lumato-sessions', String((Number(localStorage.getItem('lumato-sessions')) || 0) + 1));
   } catch { /* count it anyway */ }
   const params = new URLSearchParams(location.search);
   let source = params.get('utm_source') || params.get('ref');
@@ -396,8 +397,9 @@ async function refreshUser() {
 // out, or a menu (admin panel, recovery email, sign out) when signed in.
 function renderTopbar() {
   const el = document.getElementById('topbar-actions');
+  const bell = `<button type="button" class="user-btn push-bell" id="push-bell" hidden>${bellIcon()}</button>`;
   if (state.user) {
-    el.innerHTML = `
+    el.innerHTML = `${bell}
       <div class="user-btn" id="user-btn" title="${esc(state.user.username)}">
         <div class="avatar">${esc(state.user.username[0].toUpperCase())}</div>
       </div>
@@ -428,13 +430,15 @@ function renderTopbar() {
       if (state.route === 'watchlist') render();
     };
   } else {
-    el.innerHTML = `
+    el.innerHTML = `${bell}
       <div class="user-btn" id="signin-btn" title="Sign in" aria-label="Sign in">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.5-7 8-7s8 3 8 7"/></svg>
       </div>
     `;
     document.getElementById('signin-btn').onclick = () => openAuthModal('login');
   }
+  document.getElementById('push-bell').onclick = togglePushFromBell;
+  syncPushBell();
 }
 
 document.addEventListener('click', (e) => {
@@ -1638,7 +1642,160 @@ document.getElementById('search-input').addEventListener('input', (e) => {
 
 // Sign-in state and page content load side by side; titles carry their
 // watchlist flags from the session cookie either way.
+// ---------- Notifications (web push) ----------
+// Viewers can allow notifications from the bell in the top bar or the
+// prompt that appears after they've watched something. iPhones only support
+// this once the site is added to the Home Screen (iOS 16.4+).
+const PUSH_ASKED_KEY = 'lumato-push-asked';
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function base64ToBytes(base64) {
+  const pad = '='.repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+function visitorId() {
+  try { return localStorage.getItem('lumato-visitor'); } catch { return null; }
+}
+
+async function pushSubscription() {
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function enablePush() {
+  if (!pushSupported()) return false;
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    if (permission === 'denied') showToast('Notifications are blocked. You can allow them in your browser settings.');
+    return false;
+  }
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    const { publicKey } = await api('/push/key');
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64ToBytes(publicKey) });
+  }
+  await api('/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON(), v: visitorId() }) });
+  try { localStorage.setItem('lumato-push-sync', String(Date.now())); } catch { /* fine */ }
+  return true;
+}
+
+async function disablePush() {
+  const sub = await pushSubscription();
+  if (!sub) return;
+  await api('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {});
+  await sub.unsubscribe().catch(() => {});
+}
+
+async function pushIsOn() {
+  if (!pushSupported() || Notification.permission !== 'granted') return false;
+  return !!(await pushSubscription().catch(() => null));
+}
+
+// The bell in the top bar: gold when notifications are on.
+async function syncPushBell() {
+  const bell = document.getElementById('push-bell');
+  if (!bell) return;
+  if (!pushSupported()) { bell.hidden = true; return; }
+  bell.hidden = false;
+  const on = await pushIsOn();
+  bell.classList.toggle('is-on', on);
+  bell.title = on ? 'Notifications are on' : 'Turn on notifications';
+  bell.setAttribute('aria-label', bell.title);
+}
+
+async function togglePushFromBell() {
+  try {
+    if (await pushIsOn()) {
+      await disablePush();
+      showToast('Notifications turned off');
+    } else if (await enablePush()) {
+      showToast("Notifications are on. We'll tell you when new episodes drop 🎬");
+    }
+  } catch (e) {
+    showToast("Couldn't change notifications. Try again.");
+  }
+  syncPushBell();
+}
+
+// Asks once in a while, at a good moment: after watching for a bit, or on a
+// return visit. "Not now" waits a week before asking again.
+function maybeAskForPush() {
+  if (!pushSupported() || Notification.permission !== 'default') return;
+  try {
+    const asked = Number(localStorage.getItem(PUSH_ASKED_KEY)) || 0;
+    if (Date.now() - asked < 7 * 24 * 60 * 60 * 1000) return;
+    localStorage.setItem(PUSH_ASKED_KEY, String(Date.now()));
+  } catch { return; }
+  if (document.getElementById('push-prompt')) return;
+  const card = document.createElement('div');
+  card.className = 'push-prompt';
+  card.id = 'push-prompt';
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-label', 'Turn on notifications');
+  card.innerHTML = `
+    <div class="push-prompt-icon">${bellIcon()}</div>
+    <div class="push-prompt-text">
+      <strong>Never miss a new episode</strong>
+      <span>Get a notification when new episodes and movies drop, and what everyone's watching.</span>
+    </div>
+    <div class="push-prompt-actions">
+      <button type="button" class="btn btn-outline" data-push="later">Not now</button>
+      <button type="button" class="btn btn-gold" data-push="yes">Turn on</button>
+    </div>`;
+  document.body.appendChild(card);
+  requestAnimationFrame(() => card.classList.add('show'));
+  const close = () => { card.classList.remove('show'); setTimeout(() => card.remove(), 300); };
+  card.querySelector('[data-push="later"]').onclick = close;
+  card.querySelector('[data-push="yes"]').onclick = async () => {
+    close();
+    try {
+      if (await enablePush()) showToast("Notifications are on. We'll tell you when new episodes drop 🎬");
+    } catch { showToast("Couldn't turn on notifications. Try again."); }
+    syncPushBell();
+  };
+}
+
+function bellIcon() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+}
+
+// Keeps the server's copy fresh (and linked to the account after signing in).
+async function refreshPushSubscription() {
+  if (!(await pushIsOn())) return;
+  try {
+    const last = Number(localStorage.getItem('lumato-push-sync')) || 0;
+    if (Date.now() - last < 24 * 60 * 60 * 1000) return;
+    const sub = await pushSubscription();
+    await api('/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON(), v: visitorId() }) });
+    localStorage.setItem('lumato-push-sync', String(Date.now()));
+  } catch { /* try again next visit */ }
+}
+
+// Links from notifications: /?play=<title>[&ep=<episode>] opens the player.
+async function openFromLink(params) {
+  const id = Number(params.get('play'));
+  if (!id) return;
+  const epId = Number(params.get('ep'));
+  try {
+    if (!epId) { await playTitle(id); return; }
+    const item = await api(`/titles/${id}`);
+    const episodes = await api(`/titles/${id}/episodes`);
+    const index = episodes.findIndex((e) => e.id === epId && e.video_url);
+    if (index < 0) { await playTitle(id); return; }
+    openPlayer(episodePlayItem(item, episodes, index));
+  } catch {
+    showToast("Couldn't open that title.");
+  }
+}
+
 // Open the page the address points at (e.g. after a refresh on #movies).
+const linkParams = new URLSearchParams(location.search);
 const initial = routeFromLocation();
 state.route = initial.route;
 state.query = initial.query;
@@ -1648,6 +1805,12 @@ history.replaceState({ route: state.route }, '', routeUrl(state.route));
 refreshUser().then(() => { if (state.route === 'watchlist') render(); });
 render();
 resumePendingDownloads();
+openFromLink(linkParams);
+refreshPushSubscription();
+// A returning viewer gets the notifications prompt after looking around.
+try {
+  if ((Number(localStorage.getItem('lumato-sessions')) || 0) >= 2) setTimeout(maybeAskForPush, 25000);
+} catch { /* storage blocked */ }
 
 if ('serviceWorker' in navigator) {
   // When a deploy ships a new service worker it takes over open pages right

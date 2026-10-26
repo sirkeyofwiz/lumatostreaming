@@ -11,6 +11,7 @@ const tmdb = require('./tmdb');
 const anilist = require('./anilist');
 const mailer = require('./mailer');
 const storage = require('./storage');
+const push = require('./push');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -172,6 +173,23 @@ app.post('/api/events', ah(async (req, res) => {
   res.status(204).end();
 }));
 
+// ---------- Notifications (web push) ----------
+app.get('/api/push/key', ah(async (req, res) => {
+  res.json({ publicKey: (await push.getKeys()).publicKey });
+}));
+app.post('/api/push/subscribe', ah(async (req, res) => {
+  const ok = await push.subscribe(req, req.body && req.body.subscription, req.body && req.body.v);
+  res.status(ok ? 201 : 400).json({ ok });
+}));
+app.post('/api/push/unsubscribe', ah(async (req, res) => {
+  await push.unsubscribe(req.body && req.body.endpoint);
+  res.json({ ok: true });
+}));
+app.post('/api/push/opened', ah(async (req, res) => {
+  await push.opened(req, req.body && req.body.id);
+  res.status(204).end();
+}));
+
 // A one-time password reset link for a user, valid for 1 hour. Used by
 // "Forgot your password?" and by the admin panel's "Send reset link".
 async function issueResetLink(req, user) {
@@ -298,7 +316,10 @@ app.post('/api/admin/titles/:id/episodes', requireAdmin, ah(async (req, res) => 
   const row = await db.get('SELECT * FROM episodes WHERE id = ?', [result.lastID]);
   const label = `${title.title} — S${row.season_number}E${row.episode_number}`;
   await insights.logAdmin(req, 'episode.create', label);
-  if (row.video_url) await insights.logAdmin(req, 'video.set', label, 'episode video added');
+  if (row.video_url) {
+    await insights.logAdmin(req, 'video.set', label, 'episode video added');
+    push.videoAdded(row.title_id, row.id);
+  }
   res.status(201).json(row);
 }));
 
@@ -317,6 +338,8 @@ app.put('/api/admin/episodes/:id', requireAdmin, ah(async (req, res) => {
   const label = await episodeLabel(row);
   if (row.video_url && row.video_url !== existing.video_url) await insights.logAdmin(req, 'video.set', label, 'episode video changed');
   else await insights.logAdmin(req, 'episode.update', label);
+  // Only an episode's first video is news; replacing a file isn't.
+  if (row.video_url && !existing.video_url) push.videoAdded(row.title_id, row.id);
   res.json(row);
 }));
 
@@ -611,6 +634,41 @@ app.get('/api/admin/health', requireAdmin, ah(async (req, res) => {
   res.json(await insights.health());
 }));
 
+app.get('/api/admin/notifications', requireAdmin, ah(async (req, res) => {
+  res.json(await push.overview());
+}));
+app.get('/api/admin/notifications/title/:id', requireAdmin, ah(async (req, res) => {
+  const info = await push.titleInfo(req.params.id);
+  if (!info) return res.status(404).json({ error: 'Title not found.' });
+  res.json(info);
+}));
+// Sends to every device that allowed notifications, or with test: true only
+// to the signed-in admin's own devices.
+app.post('/api/admin/notifications', requireAdmin, ah(async (req, res) => {
+  const b = req.body || {};
+  const titleId = Number(b.title_id) || null;
+  const t = titleId ? await db.get('SELECT id, title, type, backdrop_url, poster_url FROM titles WHERE id = ?', [titleId]) : null;
+  const url = t ? `/?play=${t.id}` : '/';
+  const image = b.image === false ? null : (t ? (t.backdrop_url || t.poster_url) : null);
+  try {
+    const sent = await push.send({
+      kind: b.test ? 'test' : 'manual', title: b.title, body: b.body, url, image, titleId: t ? t.id : null,
+      createdBy: req.session.user.username, onlyUserId: b.test ? req.session.user.id : null,
+    });
+    await insights.logAdmin(req, b.test ? 'notification.test' : 'notification.send', sent.title, `${sent.delivered} of ${sent.sent} devices`);
+    res.json(sent);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+}));
+app.put('/api/admin/notifications/settings', requireAdmin, ah(async (req, res) => {
+  const on = !!(req.body && req.body.auto);
+  await push.setSetting('auto_notify', on ? 'on' : 'off');
+  await insights.logAdmin(req, 'notification.auto', on ? 'Automatic notifications on' : 'Automatic notifications off');
+  res.json({ auto: on });
+}));
+
 app.get('/api/admin/titles', requireAdmin, ah(async (req, res) => {
   const rows = await db.all('SELECT * FROM titles ORDER BY id DESC');
   res.json(rows);
@@ -631,7 +689,10 @@ app.post('/api/admin/titles', requireAdmin, ah(async (req, res) => {
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [result.lastID]);
   await insights.logAdmin(req, 'title.create', row.title, row.type);
-  if (row.video_url) await insights.logAdmin(req, 'video.set', row.title, 'movie video added');
+  if (row.video_url) {
+    await insights.logAdmin(req, 'video.set', row.title, 'movie video added');
+    if (row.type === 'movie') push.videoAdded(row.id);
+  }
   res.status(201).json(row);
 }));
 
@@ -656,6 +717,7 @@ app.put('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [req.params.id]);
   await insights.logAdmin(req, 'title.update', row.title);
   if (row.video_url && row.video_url !== existing.video_url) await insights.logAdmin(req, 'video.set', row.title, 'movie video changed');
+  if (row.type === 'movie' && row.video_url && !existing.video_url) push.videoAdded(row.id);
   res.json(row);
 }));
 

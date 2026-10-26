@@ -170,9 +170,13 @@ async function openPlayer(item) {
       </div>
     </div>
   `, () => {
+    const watched = activePlayer ? activePlayer.watched() : 0;
     if (activePlayer) activePlayer.destroy();
     if (releaseOffline) releaseOffline();
     refreshContinueRow();
+    // Closing (not switching episodes) after a real watch is a good moment
+    // to offer notifications.
+    if (watched >= 60 && !document.querySelector('#modal-root .lp')) setTimeout(maybeAskForPush, 800);
   });
 
   const lp = root.querySelector('.lp');
@@ -189,7 +193,10 @@ async function openPlayer(item) {
   if (w) progress = trackProgress(video, item, nextItem);
   const ids = w ? { title_id: w.titleId, episode_id: w.episodeId || undefined } : (item.id ? { title_id: item.id } : null);
 
+  let watchedSeconds = 0;
+  let lastTick = null;
   activePlayer = {
+    watched: () => watchedSeconds,
     destroy() {
       if (progress) progress.save();
       timers.forEach(clearTimeout);
@@ -274,7 +281,12 @@ async function openPlayer(item) {
     bar.setAttribute('aria-valuenow', String(Math.round(time)));
     bar.setAttribute('aria-valuetext', `${formatTime(time || 0)} of ${formatTime(d || 0)}`);
   };
-  listen(video, 'timeupdate', () => { if (!scrubbing) paintProgress(video.currentTime); });
+  listen(video, 'timeupdate', () => {
+    if (!scrubbing) paintProgress(video.currentTime);
+    const t = video.currentTime;
+    if (lastTick !== null && t > lastTick && t - lastTick < 2) watchedSeconds += t - lastTick;
+    lastTick = t;
+  });
   listen(video, 'loadedmetadata', () => {
     paintProgress(video.currentTime);
     const h = video.videoHeight;

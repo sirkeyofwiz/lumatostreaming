@@ -1,6 +1,6 @@
 // Bump this on any deploy that changes cached files, so old caches get
 // cleared out and everyone picks up the new version automatically.
-const CACHE_VERSION = 'lumatostreaming-v23';
+const CACHE_VERSION = 'lumatostreaming-v24';
 
 const STATIC_ASSETS = [
   '/styles.css',
@@ -91,4 +91,42 @@ self.addEventListener('fetch', (event) => {
       return cached || fetchPromise;
     })
   );
+});
+
+// ---------- Notifications ----------
+// The server sends { id, title, body, url, image, tag }.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = { title: 'LumatoStreaming', body: event.data ? event.data.text() : '' }; }
+  event.waitUntil(self.registration.showNotification(data.title || 'LumatoStreaming', {
+    body: data.body || '',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    image: data.image || undefined,
+    tag: data.tag || undefined,
+    data: { url: data.url || '/', id: data.id },
+  }));
+});
+
+// Tapping a notification opens (or switches to) the site at its link, and
+// counts the tap for the admin Notifications page.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const { url, id } = event.notification.data || {};
+  const target = new URL(url || '/', self.location.origin).href;
+  event.waitUntil((async () => {
+    if (id) {
+      fetch('/api/push/opened', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).catch(() => {});
+    }
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const win = wins.find((w) => new URL(w.url).origin === self.location.origin);
+    if (win) {
+      try {
+        await win.focus();
+        await win.navigate(target);
+        return;
+      } catch { /* not ours to steer: open a new window instead */ }
+    }
+    await self.clients.openWindow(target);
+  })());
 });
