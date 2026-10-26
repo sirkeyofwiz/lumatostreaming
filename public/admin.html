@@ -21,56 +21,207 @@
 </head>
 <body class="admin-body">
 
-<div class="admin-wrap">
-  <div class="admin-topbar">
-    <div class="logo">
-      <img src="/icons/logo-mark.png" class="logo-img" alt="LumatoStreaming" />
-          <div class="logo-text">LUMATO<span class="logo-accent">STREAMING</span></div>
-      <span class="tag" style="color:#241706;background:var(--gold); margin-left:8px;">ADMIN</span>
-    </div>
-    <div class="admin-topbar-actions">
-      <a href="/" class="btn btn-outline">Back to site</a>
-      <div id="admin-user"></div>
-    </div>
-  </div>
+<div id="admin-gate" class="admin-gate" hidden>Checking access…</div>
 
-  <div id="admin-gate" class="empty-state" hidden>Checking access…</div>
+<div id="admin-content" class="admin-shell" hidden>
+  <nav class="admin-sidebar" aria-label="Admin sections">
+    <div class="admin-brand">
+      <img src="/icons/logo-mark.png" class="logo-img" alt="" />
+      <div class="logo-text">LUMATO<span class="logo-accent">STREAMING</span></div>
+    </div>
+    <a class="admin-nav" href="#dashboard" data-view="dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+      <span>Dashboard</span>
+    </a>
+    <a class="admin-nav" href="#analytics" data-view="analytics">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
+      <span>Analytics</span>
+    </a>
+    <a class="admin-nav" href="#catalog" data-view="catalog">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16"/></svg>
+      <span>Catalog</span>
+    </a>
+    <a class="admin-nav" href="#missing" data-view="missing">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg>
+      <span>Missing videos</span>
+      <span class="admin-nav-badge is-alert" id="nav-missing-count" hidden></span>
+    </a>
+    <a class="admin-nav" href="#uploads" data-view="uploads">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 20h16"/></svg>
+      <span>Uploads</span>
+      <span class="admin-nav-badge is-alert" id="nav-uploads-failed" hidden></span>
+    </a>
+    <a class="admin-nav" href="#users" data-view="users">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6"/><path d="M16 4a4 4 0 0 1 0 8M22 21c0-3-2-5-4-6"/></svg>
+      <span>Users</span>
+      <span class="admin-nav-badge" id="nav-users-count" hidden></span>
+    </a>
+    <a class="admin-nav" href="#activity" data-view="activity">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span>Activity log</span>
+    </a>
+    <a class="admin-nav" href="#health" data-view="health">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+      <span>System health</span>
+      <span class="admin-nav-dot" id="nav-health-dot" hidden></span>
+    </a>
+    <div class="admin-sidebar-foot">
+      <div id="admin-user" class="admin-user"></div>
+      <a href="/" class="admin-view-site">View site</a>
+    </div>
+  </nav>
 
-  <div id="admin-content" hidden>
-    <div class="admin-head">
-      <h1>Catalog</h1>
-      <div style="display:flex; gap:10px;">
-        <a href="/bulk-upload.html" class="btn btn-outline" style="text-decoration:none;">Bulk upload episodes</a>
-        <div class="btn btn-outline" id="import-tmdb-btn">Import title</div>
-        <div class="btn btn-gold" id="add-title-btn">Add title</div>
+  <main class="admin-main">
+
+    <section class="admin-view" data-view="dashboard" hidden>
+      <div class="admin-head">
+        <div>
+          <h1>Dashboard</h1>
+          <p class="admin-sub" id="dash-date"></p>
+        </div>
       </div>
-    </div>
-    <div class="admin-toolbar">
-      <label class="admin-search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
-        <input id="admin-search" type="search" placeholder="Search by title, genre or year…" autocomplete="off" />
-      </label>
-      <select id="admin-type-filter" class="admin-select" aria-label="Filter by type">
-        <option value="">All types</option>
-        <option value="movie">Movies</option>
-        <option value="series">Shows</option>
-      </select>
-      <span id="admin-count" class="admin-count"></span>
-    </div>
-    <div class="admin-table-wrap">
-    <table class="admin-table">
-      <thead>
-        <tr>
-          <th>Title</th><th>Type</th><th>Year</th><th>Genre</th><th>Rating</th><th>Premium</th><th>Featured</th><th></th>
-        </tr>
-      </thead>
-      <tbody id="admin-rows"></tbody>
-    </table>
-    </div>
-    <p style="margin-top:20px; font-size:11.5px; color:var(--text-dim);">
-      Imported title data is provided by <a href="https://www.themoviedb.org" target="_blank" style="color:var(--text-dim);">TMDB</a> and <a href="https://anilist.co" target="_blank" style="color:var(--text-dim);">AniList</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.
-    </p>
-  </div>
+      <div id="dash-body" class="admin-stack"><div class="admin-loading">Loading…</div></div>
+    </section>
+
+    <section class="admin-view" data-view="analytics" hidden>
+      <div class="admin-head">
+        <div>
+          <h1>Analytics</h1>
+          <p class="admin-sub">What viewers do on the site. Anonymous — no names, emails or IP addresses are recorded.</p>
+        </div>
+        <div class="admin-chips" role="group" aria-label="Date range">
+          <button type="button" class="admin-chip" data-range="7">7 days</button>
+          <button type="button" class="admin-chip is-on" data-range="30">30 days</button>
+          <button type="button" class="admin-chip" data-range="90">90 days</button>
+        </div>
+      </div>
+      <div id="analytics-body" class="admin-stack"><div class="admin-loading">Loading…</div></div>
+    </section>
+
+    <section class="admin-view" data-view="catalog" hidden>
+      <div class="admin-head">
+        <div>
+          <h1>Catalog</h1>
+          <p class="admin-sub">Every movie and show on the site.</p>
+        </div>
+        <div class="admin-head-actions">
+          <div class="btn btn-outline" id="import-tmdb-btn">Import title</div>
+          <div class="btn btn-gold" id="add-title-btn">Add title</div>
+        </div>
+      </div>
+      <div class="admin-toolbar">
+        <label class="admin-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+          <input id="admin-search" type="search" placeholder="Search by title, genre or year…" autocomplete="off" aria-label="Search titles" />
+        </label>
+        <select id="admin-type-filter" class="admin-select" aria-label="Filter by type">
+          <option value="">All types</option>
+          <option value="movie">Movies</option>
+          <option value="series">Shows</option>
+        </select>
+        <span id="admin-count" class="admin-count"></span>
+      </div>
+      <div class="admin-card admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Title</th><th>Type</th><th>Year</th><th>Genre</th><th>Rating</th><th>Premium</th><th>Featured</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="admin-rows"></tbody>
+        </table>
+      </div>
+      <p class="admin-credit">
+        Imported title data is provided by <a href="https://www.themoviedb.org" target="_blank">TMDB</a> and <a href="https://anilist.co" target="_blank">AniList</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.
+      </p>
+    </section>
+
+    <section class="admin-view" data-view="missing" hidden>
+      <div class="admin-head">
+        <div>
+          <h1>Missing videos</h1>
+          <p class="admin-sub">Titles viewers can see but can't play yet — your upload to-do list.</p>
+        </div>
+        <div class="admin-head-actions">
+          <a href="/bulk-upload.html" class="btn btn-gold">Bulk upload episodes</a>
+        </div>
+      </div>
+      <div id="missing-body" class="admin-stack"><div class="admin-loading">Loading…</div></div>
+    </section>
+
+    <section class="admin-view" data-view="users" hidden>
+      <div class="admin-head">
+        <div>
+          <h1>Users</h1>
+          <p class="admin-sub" id="users-sub"></p>
+        </div>
+      </div>
+      <div class="admin-toolbar">
+        <label class="admin-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+          <input id="users-search" type="search" placeholder="Search by username or email" autocomplete="off" aria-label="Search users" />
+        </label>
+        <div class="admin-chips" role="group" aria-label="Filter users">
+          <button type="button" class="admin-chip is-on" data-user-filter="all">All</button>
+          <button type="button" class="admin-chip" data-user-filter="new">Joined this month</button>
+          <button type="button" class="admin-chip" data-user-filter="noemail">No recovery email</button>
+          <button type="button" class="admin-chip" data-user-filter="admins">Admins</button>
+        </div>
+        <span id="users-count" class="admin-count"></span>
+      </div>
+      <div class="admin-card admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr><th>User</th><th>Email</th><th>Joined</th><th>Watchlist</th><th>Role</th><th></th></tr>
+          </thead>
+          <tbody id="users-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-view" data-view="uploads" hidden>
+      <div class="admin-head">
+        <div>
+          <h1>Uploads</h1>
+          <p class="admin-sub">Videos added to the site, and uploads that failed.</p>
+        </div>
+        <div class="admin-head-actions">
+          <a href="/bulk-upload.html" class="btn btn-gold">Bulk upload episodes</a>
+        </div>
+      </div>
+      <div id="uploads-body" class="admin-stack"><div class="admin-loading">Loading…</div></div>
+    </section>
+
+    <section class="admin-view" data-view="activity" hidden>
+      <div class="admin-head">
+        <div>
+          <h1>Activity log</h1>
+          <p class="admin-sub">Every change made in the admin panel, and new sign-ups.</p>
+        </div>
+        <div class="admin-chips" role="group" aria-label="Filter activity">
+          <button type="button" class="admin-chip is-on" data-activity-filter="all">All</button>
+          <button type="button" class="admin-chip" data-activity-filter="content">Content</button>
+          <button type="button" class="admin-chip" data-activity-filter="uploads">Uploads</button>
+          <button type="button" class="admin-chip" data-activity-filter="users">Users</button>
+        </div>
+      </div>
+      <div id="activity-body" class="admin-stack"><div class="admin-loading">Loading…</div></div>
+    </section>
+
+    <section class="admin-view" data-view="health" hidden>
+      <div class="admin-head">
+        <div>
+          <h1>System health</h1>
+          <p class="admin-sub" id="health-sub">Is everything running properly?</p>
+        </div>
+        <div class="admin-head-actions">
+          <button type="button" class="btn btn-outline" id="health-refresh">Check again</button>
+        </div>
+      </div>
+      <div id="health-body" class="admin-stack"><div class="admin-loading">Loading…</div></div>
+    </section>
+
+  </main>
 </div>
 
 <div id="modal-root"></div>

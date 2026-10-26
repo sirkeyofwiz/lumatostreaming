@@ -52,6 +52,33 @@ const sqliteSchema = `
     vtt_content TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- Viewer activity for the admin Analytics page (visits, plays, searches…).
+  -- No personal details: visitor_id is a random ID kept in the browser.
+  CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    visitor_id TEXT,
+    user_id INTEGER,
+    title_id INTEGER,
+    episode_id INTEGER,
+    value TEXT,
+    num INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS events_created_idx ON events(created_at);
+
+  -- What admins changed, for the Activity log.
+  CREATE TABLE IF NOT EXISTS admin_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    action TEXT NOT NULL,
+    target TEXT,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS admin_log_created_idx ON admin_log(created_at);
 `;
 
 const pgSchema = `
@@ -108,6 +135,33 @@ const pgSchema = `
     vtt_content TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
+
+  -- Viewer activity for the admin Analytics page (visits, plays, searches…).
+  -- No personal details: visitor_id is a random ID kept in the browser.
+  CREATE TABLE IF NOT EXISTS events (
+    id BIGSERIAL PRIMARY KEY,
+    type TEXT NOT NULL,
+    visitor_id TEXT,
+    user_id INTEGER,
+    title_id INTEGER,
+    episode_id INTEGER,
+    value TEXT,
+    num INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS events_created_idx ON events(created_at);
+
+  -- What admins changed, for the Activity log.
+  CREATE TABLE IF NOT EXISTS admin_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER,
+    username TEXT,
+    action TEXT NOT NULL,
+    target TEXT,
+    detail TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS admin_log_created_idx ON admin_log(created_at);
 `;
 
 // Columns added after the tables were first created. CREATE TABLE IF NOT

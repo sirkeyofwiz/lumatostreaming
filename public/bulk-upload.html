@@ -230,6 +230,13 @@ async function init() {
   });
 
   document.getElementById('upload-all-btn').addEventListener('click', uploadAll);
+
+  // Opened from the admin panel's Missing videos page: that series is preselected.
+  const preselect = new URLSearchParams(location.search).get('series');
+  if (preselect && series.some(s => String(s.id) === preselect)) {
+    select.value = preselect;
+    select.dispatchEvent(new Event('change'));
+  }
 }
 
 // Rows that point at the same season + episode as another row.
@@ -350,6 +357,8 @@ async function uploadAll() {
     } catch (err) {
       statusEl.textContent = err.message;
       statusEl.className = 'bulk-status error';
+      // Shows up under "Failed uploads" in the admin panel's Uploads page.
+      try { navigator.sendBeacon('/api/events', new Blob([JSON.stringify({ events: [{ t: 'upload_failed', value: row.file.name }] })], { type: 'application/json' })); } catch { /* best effort */ }
     }
   }
 

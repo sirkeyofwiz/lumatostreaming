@@ -164,6 +164,14 @@ function renderTable() {
 async function loadTitles() {
   titles = await api('/admin/titles');
   renderTable();
+  // An edit or delete can change what's missing — keep those pages current.
+  if (currentView === 'missing') renderMissing();
+  if (currentView === 'dashboard') renderDashboard();
+}
+
+// The catalog without redrawing the table (for pages that only need lookups).
+async function ensureTitles() {
+  if (!titles.length) titles = await api('/admin/titles');
 }
 
 // The search stays applied when the table reloads after an edit or delete.
@@ -659,6 +667,612 @@ async function openEpisodeManager(title) {
   paint();
 }
 
+// ---------- Sections: the sidebar switches between them via the address (#users etc.) ----------
+const VIEWS = ['dashboard', 'analytics', 'catalog', 'missing', 'uploads', 'users', 'activity', 'health'];
+let currentView = null;
+
+function showView() {
+  const hash = location.hash.slice(1);
+  const view = VIEWS.includes(hash) ? hash : 'dashboard';
+  currentView = view;
+  document.querySelectorAll('.admin-view').forEach((s) => { s.hidden = s.dataset.view !== view; });
+  document.querySelectorAll('.admin-nav[data-view]').forEach((a) => {
+    const on = a.dataset.view === view;
+    a.classList.toggle('is-active', on);
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  window.scrollTo(0, 0);
+  if (view === 'dashboard') renderDashboard();
+  if (view === 'catalog') loadTitles();
+  if (view === 'missing') renderMissing();
+  if (view === 'users') renderUsers();
+  if (view === 'analytics') renderAnalytics();
+  if (view === 'uploads') renderUploads();
+  if (view === 'activity') renderActivity();
+  if (view === 'health') renderHealth();
+}
+window.addEventListener('hashchange', showView);
+
+const fmtNum = (n) => Number(n || 0).toLocaleString();
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
+const plural = (n, one, many) => `${fmtNum(n)} ${n === 1 ? one : many}`;
+const ICON_WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/></svg>';
+const ICON_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>';
+const ICON_CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+
+function updateBadges(stats) {
+  const toFix = stats.episodesMissingVideo + stats.seriesWithoutEpisodes + stats.moviesMissingVideo;
+  const missing = document.getElementById('nav-missing-count');
+  missing.hidden = !toFix;
+  missing.textContent = fmtNum(toFix);
+  const usersBadge = document.getElementById('nav-users-count');
+  usersBadge.hidden = false;
+  usersBadge.textContent = fmtNum(stats.users);
+}
+
+// ---------- Dashboard ----------
+async function renderDashboard() {
+  document.getElementById('dash-date').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const body = document.getElementById('dash-body');
+  let s;
+  try { s = await api('/admin/stats'); } catch (e) {
+    body.innerHTML = `<div class="admin-loading">Couldn't load the dashboard: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (currentView !== 'dashboard') return;
+  updateBadges(s);
+  const toFix = s.episodesMissingVideo + s.seriesWithoutEpisodes + s.moviesMissingVideo;
+  const problems = [
+    s.episodesMissingVideo ? `<strong>${plural(s.episodesMissingVideo, 'episode has', 'episodes have')} no video</strong>` : '',
+    s.seriesWithoutEpisodes ? `${plural(s.seriesWithoutEpisodes, 'series has', 'series have')} no episodes yet` : '',
+    s.moviesMissingVideo ? `${plural(s.moviesMissingVideo, 'movie has', 'movies have')} no video` : '',
+  ].filter(Boolean);
+  const alert = toFix
+    ? `<a class="admin-alert" href="#missing">${ICON_WARN}<span class="admin-alert-text">${problems.join(', ')}. Viewers see these titles but can't play them.</span><span class="admin-alert-cta">Fix in Missing videos →</span></a>`
+    : `<div class="admin-alert is-ok">${ICON_OK}<span class="admin-alert-text">Every title has a video. Nice work.</span></div>`;
+
+  body.innerHTML = `
+    ${alert}
+    <div class="admin-stats">
+      <a class="admin-stat" href="#users">
+        <span class="admin-stat-label">Registered users</span>
+        <span class="admin-stat-value">${fmtNum(s.users)}</span>
+        <span class="admin-stat-note">${fmtNum(s.newUsers30d)} joined in the last 30 days</span>
+      </a>
+      <a class="admin-stat" href="#catalog">
+        <span class="admin-stat-label">Catalog</span>
+        <span class="admin-stat-value">${plural(s.titles, 'title', 'titles')}</span>
+        <span class="admin-stat-note">${fmtNum(s.movies)} movies · ${fmtNum(s.series)} series · ${fmtNum(s.episodes)} episodes</span>
+      </a>
+      <a class="admin-stat" href="#missing">
+        <span class="admin-stat-label">Episodes with no video</span>
+        <span class="admin-stat-value ${s.episodesMissingVideo ? 'is-alert' : ''}">${fmtNum(s.episodesMissingVideo)}</span>
+        <span class="admin-stat-note">of ${fmtNum(s.episodes)} · in ${plural(s.seriesWithMissing, 'series', 'series')}</span>
+      </a>
+      <a class="admin-stat" href="#missing">
+        <span class="admin-stat-label">Series with no episodes</span>
+        <span class="admin-stat-value ${s.seriesWithoutEpisodes ? 'is-gold' : ''}">${fmtNum(s.seriesWithoutEpisodes)}</span>
+        <span class="admin-stat-note">of ${fmtNum(s.series)} series</span>
+      </a>
+    </div>
+    <div class="admin-row">
+      <section class="admin-card admin-grow-1">
+        <h2>Quick actions</h2>
+        <p class="admin-card-sub">The things you do most.</p>
+        <div class="admin-quick">
+          <button type="button" class="btn btn-gold" data-quick="add">Add title</button>
+          <button type="button" class="btn btn-outline" data-quick="import">Import title</button>
+          <a class="btn btn-outline" href="/bulk-upload.html">Bulk upload episodes</a>
+          <a class="btn btn-outline" href="#users">Send a reset link</a>
+        </div>
+        ${s.usersWithoutEmail ? `<p class="admin-card-sub" style="margin:16px 0 0;"><span class="admin-warn-text">${plural(s.usersWithoutEmail, 'user has', 'users have')} no recovery email</span> — they can't reset a forgotten password themselves. You can send them a reset link from Users.</p>` : ''}
+      </section>
+      <section class="admin-card admin-grow-1" id="dash-week">
+        <h2>Last 7 days</h2>
+        <p class="admin-card-sub">Loading viewer activity…</p>
+      </section>
+    </div>
+  `;
+  // The week's activity fills in separately so the rest shows straight away.
+  api(`/admin/analytics?days=7&tz=${new Date().getTimezoneOffset()}`).then((a) => {
+    const box = document.getElementById('dash-week');
+    if (!box) return;
+    const t = a.totals;
+    const empty = !t.visits && !t.plays && !t.searches;
+    box.innerHTML = `
+      <h2>Last 7 days</h2>
+      <p class="admin-card-sub">${empty ? 'No viewer activity recorded yet — numbers appear as people use the site.' : 'Viewer activity on the site.'}</p>
+      <div class="admin-mini-stats">
+        <div><span class="admin-mini-value">${fmtNum(t.visitors)}</span><span class="admin-mini-label">visitors</span></div>
+        <div><span class="admin-mini-value">${fmtNum(t.plays)}</span><span class="admin-mini-label">plays</span></div>
+        <div><span class="admin-mini-value">${fmtNum(t.searches)}</span><span class="admin-mini-label">searches</span></div>
+        <div><span class="admin-mini-value">${fmtNum(t.downloads)}</span><span class="admin-mini-label">downloads</span></div>
+      </div>
+      <a class="btn btn-outline" href="#analytics" style="margin-top:14px; display:inline-flex; text-decoration:none;">Open Analytics</a>`;
+  }).catch(() => {});
+  body.querySelector('[data-quick="add"]').onclick = () => { location.hash = '#catalog'; openForm(null); };
+  body.querySelector('[data-quick="import"]').onclick = () => { location.hash = '#catalog'; openTmdbSearch(); };
+}
+
+// ---------- Missing videos ----------
+async function renderMissing() {
+  const body = document.getElementById('missing-body');
+  let m;
+  try {
+    [m] = await Promise.all([api('/admin/missing'), ensureTitles()]);
+  } catch (e) {
+    body.innerHTML = `<div class="admin-loading">Couldn't load missing videos: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (currentView !== 'missing') return;
+  const episodesMissing = m.seriesMissingEpisodes.reduce((a, s) => a + s.missing, 0);
+  const episodesTotal = m.seriesMissingEpisodes.reduce((a, s) => a + s.total, 0);
+  const nothing = !episodesMissing && !m.seriesWithoutEpisodes.length && !m.moviesWithoutVideo.length;
+  if (nothing) {
+    body.innerHTML = `<div class="admin-alert is-ok">${ICON_OK}<span class="admin-alert-text">Every title has a video. Nothing to upload right now.</span></div>`;
+    return;
+  }
+
+  const seriesRows = m.seriesMissingEpisodes.map((s) => {
+    const have = s.total - s.missing;
+    const pct = s.total ? Math.round((have / s.total) * 100) : 0;
+    return `
+      <tr>
+        <td><div style="font-weight:600;">${esc(s.title)}</div><div class="admin-muted" style="font-size:12px;">${esc(s.genre)} · ${plural(s.total, 'episode', 'episodes')}</div></td>
+        <td><div class="admin-bar"><div class="admin-bar-track"><div class="admin-bar-fill" style="width:${pct}%"></div></div><span class="admin-bar-label">${fmtNum(have)} / ${fmtNum(s.total)}</span></div></td>
+        <td class="admin-num-alert" style="text-align:right;">${fmtNum(s.missing)}</td>
+        <td><div class="row-actions">
+          <button type="button" class="btn btn-outline" data-episodes="${s.id}">Episodes</button>
+          <a class="btn btn-gold" style="text-decoration:none;" href="/bulk-upload.html?series=${s.id}">Upload</a>
+        </div></td>
+      </tr>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div class="admin-stats">
+      <div class="admin-stat"><span class="admin-stat-label">Episodes with no video</span><span class="admin-stat-value ${episodesMissing ? 'is-alert' : ''}">${fmtNum(episodesMissing)}</span><span class="admin-stat-note">in ${plural(m.seriesMissingEpisodes.length, 'series', 'series')}</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">Series with no episodes</span><span class="admin-stat-value ${m.seriesWithoutEpisodes.length ? 'is-gold' : ''}">${fmtNum(m.seriesWithoutEpisodes.length)}</span><span class="admin-stat-note">add or import their episode list</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">Movies with no video</span><span class="admin-stat-value">${fmtNum(m.moviesWithoutVideo.length)}</span><span class="admin-stat-note">add a video link or upload</span></div>
+    </div>
+    ${m.seriesMissingEpisodes.length ? `
+    <section class="admin-card">
+      <h2>Series missing episode videos</h2>
+      <p class="admin-card-sub">Sorted by how many episodes still need a video (${fmtNum(episodesMissing)} of ${fmtNum(episodesTotal)} episodes in these series).</p>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Series</th><th>Videos uploaded</th><th style="text-align:right;">Missing</th><th></th></tr></thead>
+          <tbody>${seriesRows}</tbody>
+        </table>
+      </div>
+    </section>` : ''}
+    <div class="admin-row">
+      ${m.seriesWithoutEpisodes.length ? `
+      <section class="admin-card admin-grow-2">
+        <h2>Series with no episodes (${fmtNum(m.seriesWithoutEpisodes.length)})</h2>
+        <p class="admin-card-sub">Open one to add episodes, or import its episode list from TMDB, then upload the videos.</p>
+        <div class="admin-pill-list">
+          ${m.seriesWithoutEpisodes.map((s) => `<span class="admin-pill-item">${esc(s.title)} <button type="button" class="btn btn-outline" data-episodes="${s.id}">Episodes</button></span>`).join('')}
+        </div>
+      </section>` : ''}
+      ${m.moviesWithoutVideo.length ? `
+      <section class="admin-card admin-grow-1">
+        <h2>Movies with no video (${fmtNum(m.moviesWithoutVideo.length)})</h2>
+        <p class="admin-card-sub">Edit a movie to add its video.</p>
+        <div class="admin-list">
+          ${m.moviesWithoutVideo.map((t) => `<div class="admin-list-item"><span>${esc(t.title)}</span><button type="button" class="btn btn-outline" data-edit="${t.id}">Add video</button></div>`).join('')}
+        </div>
+      </section>` : ''}
+    </div>
+  `;
+  body.querySelectorAll('[data-episodes]').forEach((btn) => {
+    btn.onclick = () => {
+      const t = titles.find((x) => x.id === Number(btn.dataset.episodes));
+      if (t) openEpisodeManager(t);
+    };
+  });
+  body.querySelectorAll('[data-edit]').forEach((btn) => {
+    btn.onclick = () => {
+      const t = titles.find((x) => x.id === Number(btn.dataset.edit));
+      if (t) openForm(t);
+    };
+  });
+}
+
+// ---------- Users ----------
+let users = [];
+let userFilter = 'all';
+
+async function renderUsers() {
+  try { users = await api('/admin/users'); } catch (e) {
+    document.getElementById('users-rows').innerHTML = `<tr><td colspan="6" class="admin-empty">Couldn't load users: ${esc(e.message)}</td></tr>`;
+    return;
+  }
+  const admins = users.filter((u) => u.is_admin).length;
+  document.getElementById('users-sub').textContent = `${plural(users.length, 'account', 'accounts')} · ${plural(admins, 'admin', 'admins')}`;
+  drawUsers();
+}
+
+function drawUsers() {
+  const words = document.getElementById('users-search').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const monthAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const shown = users.filter((u) => {
+    if (userFilter === 'new' && !(u.created_at && new Date(u.created_at).getTime() >= monthAgo)) return false;
+    if (userFilter === 'noemail' && u.email) return false;
+    if (userFilter === 'admins' && !u.is_admin) return false;
+    const hay = `${u.username} ${u.email || ''}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+  document.getElementById('users-count').textContent = shown.length === users.length ? plural(users.length, 'user', 'users') : `${fmtNum(shown.length)} of ${fmtNum(users.length)} users`;
+  document.getElementById('users-rows').innerHTML = shown.length ? shown.map((u) => `
+    <tr>
+      <td><div class="admin-userline"><div class="avatar">${esc(u.username[0].toUpperCase())}</div><span style="font-weight:600;">${esc(u.username)}</span></div></td>
+      <td>${u.email ? `<span class="admin-muted">${esc(u.email)}</span>` : '<span class="admin-warn-text">No recovery email</span>'}</td>
+      <td class="admin-muted">${fmtDate(u.created_at)}</td>
+      <td class="admin-muted">${u.watchlist_count ? plural(u.watchlist_count, 'title', 'titles') : '—'}</td>
+      <td><span class="admin-role ${u.is_admin ? 'is-owner' : ''}">${u.is_admin ? 'Admin' : 'Viewer'}</span></td>
+      <td><div class="row-actions"><button type="button" class="btn btn-outline" data-reset="${u.id}">Send reset link</button></div></td>
+    </tr>`).join('') : `<tr><td colspan="6" class="admin-empty">No users match.</td></tr>`;
+  document.querySelectorAll('#users-rows [data-reset]').forEach((btn) => {
+    btn.onclick = () => sendResetLink(users.find((u) => u.id === Number(btn.dataset.reset)), btn);
+  });
+}
+
+document.getElementById('users-search').addEventListener('input', drawUsers);
+document.querySelectorAll('[data-user-filter]').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    userFilter = chip.dataset.userFilter;
+    document.querySelectorAll('[data-user-filter]').forEach((c) => c.classList.toggle('is-on', c === chip));
+    drawUsers();
+  });
+});
+
+// Creates a one-hour reset link; it's emailed when the user has an address,
+// and always shown here so you can send it yourself (e.g. on WhatsApp).
+async function sendResetLink(user, btn) {
+  if (!user) return;
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+  let r;
+  try {
+    r = await api(`/admin/users/${user.id}/reset-link`, { method: 'POST' });
+  } catch (e) {
+    showToast(e.message);
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send reset link';
+  }
+  const status = r.emailed
+    ? `Emailed to <strong>${esc(user.email)}</strong>. You can also send the link yourself:`
+    : r.hasEmail
+      ? `<span class="admin-warn-text">The email couldn't be sent</span> (your email service may only deliver to its own account until your domain is verified). Send this link to <strong>${esc(user.username)}</strong> yourself:`
+      : `<strong>${esc(user.username)}</strong> has no recovery email, so send this link to them yourself (WhatsApp, SMS…):`;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal" style="max-width:520px;">
+        <div class="modal-body">
+          <h2 style="font-family:'Bebas Neue', sans-serif; font-size:26px; font-weight:400; letter-spacing:.5px; margin-bottom:10px;">Reset link for ${esc(user.username)}</h2>
+          <p style="font-size:13.5px; line-height:1.55; color:var(--text);">${status}</p>
+          <div class="admin-link-box">
+            <input type="text" readonly value="${esc(r.link)}" aria-label="Reset link" id="reset-link-input" />
+            <button type="button" class="btn btn-gold" id="reset-link-copy">Copy</button>
+          </div>
+          <p style="font-size:12.5px; color:var(--text-dim); margin-top:12px; line-height:1.5;">Works once and expires in 1 hour. Anyone with this link can set this account's password, so only send it to its owner.</p>
+          <div style="display:flex; justify-content:flex-end; margin-top:16px;"><button type="button" class="btn btn-outline" id="reset-link-done">Done</button></div>
+        </div>
+      </div>
+    </div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.modal-backdrop').addEventListener('click', (e) => { if (e.target.classList.contains('modal-backdrop')) close(); });
+  document.getElementById('reset-link-done').onclick = close;
+  document.getElementById('reset-link-copy').onclick = async () => {
+    const input = document.getElementById('reset-link-input');
+    try { await navigator.clipboard.writeText(input.value); } catch { input.select(); document.execCommand('copy'); }
+    showToast('Link copied');
+  };
+}
+
+// ---------- Analytics ----------
+let analyticsDays = 30;
+
+// Change vs the previous period of the same length, e.g. "▲ 18%".
+function delta(now, before) {
+  if (!before) return now ? '<span class="admin-delta is-up">New</span>' : '';
+  const pct = Math.round(((now - before) / before) * 100);
+  if (!pct) return '<span class="admin-delta">No change</span>';
+  return `<span class="admin-delta ${pct > 0 ? 'is-up' : 'is-down'}">${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}%</span>`;
+}
+
+// A two-line chart (visitors and plays per day) drawn as inline SVG.
+function lineChart(daily) {
+  const w = 640, h = 200, pad = 8;
+  const max = Math.max(1, ...daily.map((d) => Math.max(d.visitors, d.plays)));
+  const x = (i) => pad + (i * (w - 2 * pad)) / Math.max(1, daily.length - 1);
+  const y = (v) => h - pad - (v / max) * (h - 2 * pad);
+  const line = (key) => daily.map((d, i) => `${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ');
+  const grid = [0.25, 0.5, 0.75].map((f) => `<line x1="0" x2="${w}" y1="${(h - pad - f * (h - 2 * pad)).toFixed(1)}" y2="${(h - pad - f * (h - 2 * pad)).toFixed(1)}" stroke="#20252D" />`).join('');
+  const label = (d) => new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  const mid = daily[Math.floor(daily.length / 2)];
+  return `
+    <svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" role="img" aria-label="Visitors and plays per day">
+      ${grid}
+      <polyline fill="none" stroke="#5B8DEF" stroke-width="2.5" stroke-linejoin="round" points="${line('visitors')}" vector-effect="non-scaling-stroke" />
+      <polyline fill="none" stroke="var(--gold)" stroke-width="2.5" stroke-linejoin="round" points="${line('plays')}" vector-effect="non-scaling-stroke" />
+    </svg>
+    <div class="admin-chart-axis"><span>${label(daily[0])}</span><span>${label(mid)}</span><span>${label(daily[daily.length - 1])}</span></div>
+    <div class="admin-chart-max">Peak: ${fmtNum(max)} per day</div>`;
+}
+
+function barList(items, labelKey, valueKey, suffix = '') {
+  const max = Math.max(1, ...items.map((i) => i[valueKey]));
+  return items.map((i) => `
+    <div class="admin-hbar">
+      <div class="admin-hbar-top"><span>${esc(i[labelKey])}</span><span class="admin-muted">${fmtNum(i[valueKey])}${suffix}</span></div>
+      <div class="admin-bar-track"><div class="admin-bar-fill is-gold" style="width:${Math.max(2, Math.round((i[valueKey] / max) * 100))}%"></div></div>
+    </div>`).join('');
+}
+
+async function renderAnalytics() {
+  const body = document.getElementById('analytics-body');
+  let a;
+  try { a = await api(`/admin/analytics?days=${analyticsDays}&tz=${new Date().getTimezoneOffset()}`); } catch (e) {
+    body.innerHTML = `<div class="admin-loading">Couldn't load analytics: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (currentView !== 'analytics') return;
+  const t = a.totals, p = a.previous;
+  const nothing = !t.visits && !t.plays && !t.searches && !t.downloads && !t.signups;
+  const notice = nothing
+    ? `<div class="admin-alert is-info">${ICON_CLOCK}<span class="admin-alert-text">${a.trackingSince ? 'No activity in this period yet.' : '<strong>Tracking has started.</strong> Numbers appear here as people visit, search and watch — check back in a day or two.'}</span></div>`
+    : '';
+  const hoursMax = Math.max(1, ...a.hours);
+  body.innerHTML = `
+    ${notice}
+    <div class="admin-stats">
+      <div class="admin-stat"><span class="admin-stat-label">Visitors</span><span class="admin-stat-value">${fmtNum(t.visitors)}</span><span class="admin-stat-note">${fmtNum(t.visits)} visits ${delta(t.visitors, p.visitors)}</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">Plays</span><span class="admin-stat-value">${fmtNum(t.plays)}</span><span class="admin-stat-note">${t.completionRate == null ? 'no plays yet' : `${t.completionRate}% watched to the end`} ${delta(t.plays, p.plays)}</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">Searches</span><span class="admin-stat-value">${fmtNum(t.searches)}</span><span class="admin-stat-note">${fmtNum(t.noResultSearches)} found nothing</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">Downloads</span><span class="admin-stat-value">${fmtNum(t.downloads)}</span><span class="admin-stat-note">saved for offline ${delta(t.downloads, p.downloads)}</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">New sign-ups</span><span class="admin-stat-value">${fmtNum(t.signups)}</span><span class="admin-stat-note">${delta(t.signups, p.signups) || '&nbsp;'}</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">Failed plays</span><span class="admin-stat-value ${t.playErrors ? 'is-alert' : ''}">${fmtNum(t.playErrors)}</span><span class="admin-stat-note">videos that wouldn't load</span></div>
+    </div>
+    <div class="admin-row">
+      <section class="admin-card admin-grow-2">
+        <div class="admin-card-head"><h2>Visitors and plays per day</h2><div class="admin-legend"><span><i style="background:#5B8DEF"></i>Visitors</span><span><i style="background:var(--gold)"></i>Plays</span></div></div>
+        ${lineChart(a.daily)}
+      </section>
+      <section class="admin-card admin-grow-1">
+        <h2>Where visitors come from</h2>
+        <p class="admin-card-sub">Share links with <code>?utm_source=…</code> to tell campaigns apart.</p>
+        ${a.sources.length ? barList(a.sources, 'source', 'pct', '%') : '<p class="admin-muted" style="font-size:13px;">No visits recorded yet.</p>'}
+      </section>
+    </div>
+    <section class="admin-card">
+      <h2>Most-watched titles</h2>
+      <p class="admin-card-sub">Plays in this period, and how many people watched to the end.</p>
+      ${a.topTitles.length ? `
+      <div class="admin-table-wrap"><table class="admin-table">
+        <thead><tr><th>Title</th><th>Type</th><th style="text-align:right;">Opened</th><th style="text-align:right;">Plays</th><th>Watched to end</th></tr></thead>
+        <tbody>${a.topTitles.map((r) => `
+          <tr><td style="font-weight:600;">${esc(r.title)}</td><td class="admin-muted">${r.type === 'series' ? 'Series' : 'Movie'}</td><td style="text-align:right;">${fmtNum(r.opens)}</td><td style="text-align:right;">${fmtNum(r.plays)}</td>
+          <td><div class="admin-bar"><div class="admin-bar-track"><div class="admin-bar-fill" style="width:${r.completionRate}%"></div></div><span class="admin-bar-label">${r.completionRate}%</span></div></td></tr>`).join('')}
+        </tbody></table></div>` : '<p class="admin-muted" style="font-size:13px;">No plays recorded yet.</p>'}
+    </section>
+    <div class="admin-row">
+      <section class="admin-card admin-grow-1">
+        <h2>Searched, not found</h2>
+        <p class="admin-card-sub">What viewers looked for that you don't have — your upload ideas.</p>
+        ${a.noResultSearches.length ? `<div class="admin-list">${a.noResultSearches.map((s) => `<div class="admin-list-item"><span>${esc(s.query)}</span><span class="muted">${plural(s.count, 'search', 'searches')}</span></div>`).join('')}</div>` : '<p class="admin-muted" style="font-size:13px;">Nothing yet.</p>'}
+      </section>
+      <section class="admin-card admin-grow-1">
+        <h2>Top searches</h2>
+        <p class="admin-card-sub">What people search for most.</p>
+        ${a.topSearches.length ? `<div class="admin-list">${a.topSearches.map((s) => `<div class="admin-list-item"><span>${esc(s.query)}</span><span class="muted">${plural(s.count, 'search', 'searches')}</span></div>`).join('')}</div>` : '<p class="admin-muted" style="font-size:13px;">Nothing yet.</p>'}
+      </section>
+    </div>
+    <div class="admin-row">
+      <section class="admin-card admin-grow-2">
+        <h2>Busiest hours</h2>
+        <p class="admin-card-sub">When people press play (your time zone) — a good time to post new episodes.</p>
+        <div class="admin-hours" role="img" aria-label="Plays by hour of day">
+          ${a.hours.map((n, h) => `<div class="admin-hour" title="${String(h).padStart(2, '0')}:00 — ${plural(n, 'play', 'plays')}"><div class="admin-hour-bar" style="height:${Math.round((n / hoursMax) * 100)}%"></div><span>${h % 6 === 0 ? String(h).padStart(2, '0') : ''}</span></div>`).join('')}
+        </div>
+      </section>
+      <section class="admin-card admin-grow-1">
+        <h2>Videos that failed to play</h2>
+        <p class="admin-card-sub">Check these links in Catalog or Missing videos.</p>
+        ${a.playErrors.length ? `<div class="admin-list">${a.playErrors.map((e) => `<div class="admin-list-item"><span>${esc(e.title)}${e.episodeId ? ' <span class="muted">(an episode)</span>' : ''}</span><span class="muted" style="color:#F08A80;">${plural(e.count, 'time', 'times')}</span></div>`).join('')}</div>` : '<p class="admin-muted" style="font-size:13px;">None — every play loaded.</p>'}
+      </section>
+    </div>`;
+}
+
+document.querySelectorAll('[data-range]').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    analyticsDays = Number(chip.dataset.range);
+    document.querySelectorAll('[data-range]').forEach((c) => c.classList.toggle('is-on', c === chip));
+    renderAnalytics();
+  });
+});
+
+// ---------- Activity log ----------
+let activityItems = [];
+let activityFilter = 'all';
+
+// How each kind of change reads in the log, and which filter it belongs to.
+const ACTIONS = {
+  'title.create': ['added the title', 'content', 'gold'],
+  'title.update': ['edited', 'content', 'blue'],
+  'title.delete': ['deleted the title', 'content', 'red'],
+  'episode.create': ['added the episode', 'content', 'gold'],
+  'episode.update': ['edited the episode', 'content', 'blue'],
+  'episode.delete': ['deleted the episode', 'content', 'red'],
+  'episodes.import': ['imported episodes for', 'content', 'gold'],
+  'subtitle.add': ['added subtitles to', 'content', 'blue'],
+  'subtitle.delete': ['removed subtitles', 'content', 'red'],
+  'video.set': ['uploaded a video for', 'uploads', 'teal'],
+  'user.reset_link': ['created a reset link for', 'users', 'blue'],
+  'user.signup': ['signed up', 'users', 'teal'],
+};
+
+async function renderActivity() {
+  try { activityItems = await api('/admin/activity?limit=200'); } catch (e) {
+    document.getElementById('activity-body').innerHTML = `<div class="admin-loading">Couldn't load activity: ${esc(e.message)}</div>`;
+    return;
+  }
+  drawActivity();
+}
+
+function timeAgo(d) {
+  const s = Math.round((Date.now() - new Date(d).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return new Date(d).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function drawActivity() {
+  const body = document.getElementById('activity-body');
+  const items = activityItems.filter((i) => activityFilter === 'all' || (ACTIONS[i.action] || [])[1] === activityFilter);
+  if (!items.length) {
+    body.innerHTML = `<div class="admin-card"><p class="admin-muted" style="font-size:14px;">Nothing here yet. Changes made in the admin panel from now on will appear in this log.</p></div>`;
+    return;
+  }
+  // Group by day.
+  const groups = new Map();
+  for (const i of items) {
+    const key = new Date(i.at).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(i);
+  }
+  body.innerHTML = [...groups.entries()].map(([day, list]) => `
+    <section class="admin-card">
+      <h2 class="admin-feed-day">${esc(day)}</h2>
+      <div class="admin-feed">
+        ${list.map((i) => {
+          const [verb, , color] = ACTIONS[i.action] || [i.action, '', 'blue'];
+          const text = i.action === 'user.signup'
+            ? `New user <strong>${esc(i.actor)}</strong> signed up`
+            : `<strong>${esc(i.actor || 'An admin')}</strong> ${esc(verb)}${i.target ? ` <strong>${esc(i.target)}</strong>` : ''}${i.detail ? ` <span class="admin-muted">· ${esc(i.detail)}</span>` : ''}`;
+          return `<div class="admin-feed-item"><span class="admin-feed-dot is-${color}"></span><span class="admin-feed-text">${text}</span><span class="admin-feed-time">${timeAgo(i.at)}</span></div>`;
+        }).join('')}
+      </div>
+    </section>`).join('');
+}
+
+document.querySelectorAll('[data-activity-filter]').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    activityFilter = chip.dataset.activityFilter;
+    document.querySelectorAll('[data-activity-filter]').forEach((c) => c.classList.toggle('is-on', c === chip));
+    drawActivity();
+  });
+});
+
+// ---------- Uploads ----------
+async function renderUploads() {
+  const body = document.getElementById('uploads-body');
+  let u;
+  try { u = await api('/admin/uploads'); } catch (e) {
+    body.innerHTML = `<div class="admin-loading">Couldn't load uploads: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (currentView !== 'uploads') return;
+  const badge = document.getElementById('nav-uploads-failed');
+  badge.hidden = !u.failed.length;
+  badge.textContent = fmtNum(u.failed.length);
+  body.innerHTML = `
+    <div class="admin-stats">
+      <div class="admin-stat"><span class="admin-stat-label">Videos added this week</span><span class="admin-stat-value">${fmtNum(u.thisWeek)}</span><span class="admin-stat-note">episodes and movies</span></div>
+      <div class="admin-stat"><span class="admin-stat-label">Failed uploads this week</span><span class="admin-stat-value ${u.failed.length ? 'is-alert' : ''}">${fmtNum(u.failed.length)}</span><span class="admin-stat-note">${u.failed.length ? 'retry them in Bulk upload' : 'none'}</span></div>
+      <a class="admin-stat" href="#missing"><span class="admin-stat-label">Still to upload</span><span class="admin-stat-value is-gold" id="uploads-todo">…</span><span class="admin-stat-note">see Missing videos</span></a>
+    </div>
+    <div class="admin-row">
+      <section class="admin-card admin-grow-2">
+        <h2>Recently added videos</h2>
+        <p class="admin-card-sub">The latest 50 — from Bulk upload, the episode manager or the title form.</p>
+        ${u.recent.length ? `<div class="admin-feed">${u.recent.map((r) => `
+          <div class="admin-feed-item"><span class="admin-feed-dot is-teal"></span><span class="admin-feed-text"><strong>${esc(r.target || '')}</strong> <span class="admin-muted">· ${esc(r.detail || '')} by ${esc(r.actor || 'an admin')}</span></span><span class="admin-feed-time">${fmtDate(r.at)}</span></div>`).join('')}</div>`
+          : '<p class="admin-muted" style="font-size:13px;">No uploads recorded yet — videos added from now on appear here.</p>'}
+      </section>
+      <section class="admin-card admin-grow-1">
+        <h2>Failed uploads</h2>
+        <p class="admin-card-sub">Files that didn't finish uploading in the last 7 days.</p>
+        ${u.failed.length ? `<div class="admin-list">${u.failed.map((f) => `<div class="admin-list-item"><span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.file || 'Unknown file')}</span><span class="muted">${timeAgo(f.at)}</span></div>`).join('')}</div>` : '<p class="admin-muted" style="font-size:13px;">None.</p>'}
+      </section>
+    </div>`;
+  api('/admin/stats').then((s) => {
+    const el = document.getElementById('uploads-todo');
+    if (el) el.textContent = fmtNum(s.episodesMissingVideo + s.moviesMissingVideo);
+  }).catch(() => {});
+}
+
+// ---------- System health ----------
+function fmtBytes(b) {
+  if (b == null) return 'Unknown';
+  if (b < 1048576) return `${Math.round(b / 1024)} KB`;
+  if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`;
+  return `${(b / 1073741824).toFixed(2)} GB`;
+}
+function fmtUptime(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
+}
+
+async function renderHealth() {
+  const body = document.getElementById('health-body');
+  let h;
+  const t0 = performance.now();
+  try { h = await api('/admin/health'); } catch (e) {
+    body.innerHTML = `<div class="admin-alert">${ICON_WARN}<span class="admin-alert-text"><strong>The server didn't answer.</strong> ${esc(e.message)}</span></div>`;
+    return;
+  }
+  const roundTrip = Math.round(performance.now() - t0);
+  if (currentView !== 'health') return;
+  const problems = [];
+  if (!h.database.ok) problems.push('the database is not responding');
+  if (h.errors.server24h) problems.push(`${plural(h.errors.server24h, 'server error', 'server errors')} in the last 24 hours`);
+  if (h.errors.playback24h) problems.push(`${plural(h.errors.playback24h, 'video', 'videos')} failed to play in the last 24 hours`);
+  if (!h.storage.videoUploads) problems.push('video uploads are not set up');
+  document.getElementById('nav-health-dot').hidden = !problems.length;
+  document.getElementById('health-sub').textContent = `Checked ${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+  const card = (ok, label, value, note) => `
+    <div class="admin-stat"><span class="admin-stat-label"><span class="admin-status-dot ${ok === true ? 'is-ok' : ok === false ? 'is-bad' : 'is-warn'}"></span>${label}</span><span class="admin-stat-value admin-stat-value-sm">${value}</span><span class="admin-stat-note">${note}</span></div>`;
+  body.innerHTML = `
+    ${problems.length
+      ? `<div class="admin-alert">${ICON_WARN}<span class="admin-alert-text"><strong>Needs attention:</strong> ${problems.join('; ')}.</span></div>`
+      : `<div class="admin-alert is-ok">${ICON_OK}<span class="admin-alert-text">Everything is running normally.</span></div>`}
+    <div class="admin-stats">
+      ${card(true, 'Website', 'Online', `up for ${fmtUptime(h.server.uptimeSec)} · answered in ${roundTrip} ms`)}
+      ${card(h.database.ok, 'Database', h.database.ok ? 'Healthy' : 'Not responding', h.database.ok ? `${fmtBytes(h.database.sizeBytes)} · ${h.database.latencyMs} ms check` : esc(h.database.error || ''))}
+      ${card(h.storage.videoUploads, 'Video storage', h.storage.videoUploads ? 'Connected' : 'Not set up', h.storage.videoUploads ? 'uploads go to Cloudflare R2' : 'add the R2 settings in Railway')}
+      ${card(h.storage.email ? (h.storage.emailFromOwnDomain ? true : null) : false, 'Email', h.storage.email ? (h.storage.emailFromOwnDomain ? 'Ready' : 'Limited') : 'Not set up', h.storage.email ? (h.storage.emailFromOwnDomain ? 'reset emails reach everyone' : 'reset emails only reach the Resend account owner until your domain is verified') : 'reset emails can\'t be sent')}
+      ${card(!h.errors.server24h, 'Server errors (24 h)', fmtNum(h.errors.server24h || 0), h.errors.server24h ? 'details below' : 'none')}
+      ${card(!h.errors.playback24h, 'Failed plays (24 h)', fmtNum(h.errors.playback24h || 0), h.errors.playback24h ? 'see Analytics for which videos' : 'none')}
+    </div>
+    <div class="admin-row">
+      <section class="admin-card admin-grow-2">
+        <h2>Recent server errors</h2>
+        <p class="admin-card-sub">Since the server last started.</p>
+        ${h.errors.recent.length ? `<div class="admin-list">${h.errors.recent.map((e) => `<div class="admin-list-item" style="align-items:flex-start;"><span><strong>${esc(e.method)} ${esc(e.path)}</strong><br><span class="muted">${esc(e.message)}</span></span><span class="muted" style="white-space:nowrap;">${timeAgo(e.at)}</span></div>`).join('')}</div>` : '<p class="admin-muted" style="font-size:13px;">None.</p>'}
+      </section>
+      <section class="admin-card admin-grow-1">
+        <h2>Version and server</h2>
+        <div class="admin-kv">
+          <div><span>Live version</span><span>${h.deploy.commit ? esc(h.deploy.commit) : 'Unknown'}</span></div>
+          ${h.deploy.message ? `<div><span>Latest change</span><span>${esc(h.deploy.message)}</span></div>` : ''}
+          <div><span>Running since</span><span>${new Date(h.server.startedAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span></div>
+          ${h.deploy.region ? `<div><span>Server region</span><span>${esc(h.deploy.region)}</span></div>` : ''}
+          <div><span>Memory in use</span><span>${fmtNum(h.server.memoryMB)} MB</span></div>
+          <div><span>Database</span><span>${h.database.kind === 'postgres' ? 'PostgreSQL' : 'SQLite (local)'}</span></div>
+          <div><span>Activity records</span><span>${h.eventsStored == null ? 'Unknown' : fmtNum(h.eventsStored)} <span class="admin-muted">(kept 90 days)</span></span></div>
+          <div><span>Node.js</span><span>${esc(h.server.node)}</span></div>
+        </div>
+      </section>
+    </div>`;
+}
+
+document.getElementById('health-refresh').addEventListener('click', renderHealth);
+
 async function init() {
   const gate = document.getElementById('admin-gate');
   gate.hidden = false;
@@ -674,10 +1288,22 @@ async function init() {
   }
   gate.hidden = true;
   document.getElementById('admin-content').hidden = false;
-  document.getElementById('admin-user').innerHTML = `<span style="font-size:13px; color:var(--text-dim);">Signed in as <strong style="color:var(--text);">${esc(user.username)}</strong></span>`;
+  document.getElementById('admin-user').innerHTML = `
+    <div class="avatar">${esc(user.username[0].toUpperCase())}</div>
+    <div class="admin-user-text"><div class="admin-user-name">${esc(user.username)}</div><div class="admin-user-role">Admin</div></div>`;
   document.getElementById('add-title-btn').onclick = () => openForm(null);
   document.getElementById('import-tmdb-btn').onclick = () => openTmdbSearch();
-  await loadTitles();
+  showView();
+  // The sidebar badges, whichever section opened first.
+  api('/admin/stats').then(updateBadges).catch(() => {});
+  api('/admin/health').then((h) => {
+    document.getElementById('nav-health-dot').hidden = h.database.ok && !h.errors.server24h && !h.errors.playback24h;
+  }).catch(() => {});
+  api('/admin/uploads').then((u) => {
+    const badge = document.getElementById('nav-uploads-failed');
+    badge.hidden = !u.failed.length;
+    badge.textContent = fmtNum(u.failed.length);
+  }).catch(() => {});
 }
 
 init();

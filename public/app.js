@@ -170,6 +170,13 @@ async function openPlayer(item) {
   });
   document.getElementById('player-close').onclick = closeModal;
   if (tracked) tracker = trackProgress(root.querySelector('video'), item, nextItem);
+  // Analytics: a play, and a failed play if the video can't load.
+  const ids = item.watch ? { title_id: item.watch.titleId, episode_id: item.watch.episodeId || undefined } : { title_id: item.id };
+  if (ids.title_id) {
+    trackEvent('play_start', ids);
+    const video = root.querySelector('video');
+    if (video) video.addEventListener('error', () => trackEvent('play_error', ids), { once: true });
+  }
 }
 
 // ---------- Continue watching ----------
@@ -247,11 +254,16 @@ function trackProgress(video, item, nextItem) {
       }
     }, { once: true });
   }
+  let completionSent = false;
   const save = () => {
     // Skip until playback has really started, so opening and closing the
     // player straight away doesn't wipe a saved position.
     if (!video.duration || !isFinite(video.duration) || video.currentTime < 1) return;
     recordProgress(item, video.currentTime, video.duration, nextItem);
+    if (!completionSent && video.currentTime >= video.duration * 0.95) {
+      completionSent = true;
+      trackEvent('play_complete', { title_id: item.watch.titleId, episode_id: item.watch.episodeId || undefined });
+    }
   };
   const nextBtn = document.getElementById('next-episode-btn');
   let lastSave = 0;
@@ -355,6 +367,63 @@ let state = {
   genres: [],
   user: null,
 };
+
+// ---------- Activity tracking (for the admin Analytics page) ----------
+// Anonymous: a random ID kept in this browser — no names, emails or IPs.
+// Events are batched and sent every few seconds and when the page is left.
+const trackEvent = (() => {
+  let visitor = null;
+  try {
+    visitor = localStorage.getItem('lumato-visitor');
+    if (!visitor) {
+      visitor = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+      localStorage.setItem('lumato-visitor', visitor);
+    }
+  } catch { /* private mode: still counted, just not as a returning visitor */ }
+  const queue = [];
+  function flush() {
+    if (!queue.length) return;
+    const body = JSON.stringify({ v: visitor, events: queue.splice(0, 25) });
+    try {
+      const sent = navigator.sendBeacon && navigator.sendBeacon('/api/events', new Blob([body], { type: 'application/json' }));
+      if (!sent) fetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+    } catch { /* never let tracking break the site */ }
+  }
+  setInterval(flush, 5000);
+  addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+  return (type, data = {}) => {
+    queue.push({ t: type, ...data });
+    if (queue.length >= 20) flush();
+  };
+})();
+
+// One "visit" per browser session, with where it came from (a WhatsApp
+// link, Google, ?utm_source=..., or direct).
+(function trackVisit() {
+  try {
+    if (sessionStorage.getItem('lumato-visit')) return;
+    sessionStorage.setItem('lumato-visit', '1');
+  } catch { /* count it anyway */ }
+  const params = new URLSearchParams(location.search);
+  let source = params.get('utm_source') || params.get('ref');
+  if (!source && document.referrer) {
+    try {
+      const host = new URL(document.referrer).hostname.replace(/^www\./, '');
+      if (host !== location.hostname) source = host;
+    } catch { /* unreadable referrer */ }
+  }
+  trackEvent('visit', { value: source || 'direct' });
+})();
+
+// Searches are logged once typing settles, with how many titles matched.
+let searchLogTimer;
+function trackSearch(query, results) {
+  clearTimeout(searchLogTimer);
+  searchLogTimer = setTimeout(() => {
+    if (state.query === query) trackEvent('search', { value: query, num: results });
+  }, 1500);
+}
 
 async function api(path, opts) {
   const res = await fetch(API + path, {
@@ -854,6 +923,9 @@ async function runDownload(job) {
     activeDownloads.delete(key);
     savedOfflineKeys.add(key);
     showToast(`Saved for offline viewing: ${job.meta.title}`);
+    // Keys are "title-<id>" or "episode-<id>".
+    const [kind, idPart] = key.split('-');
+    trackEvent('download', kind === 'title' ? { title_id: Number(idPart) } : { episode_id: Number(idPart) });
   } catch (err) {
     downloadControllers.delete(key);
     if (controller.signal.aborted) {
@@ -1085,6 +1157,7 @@ function loadEpisodePreview(video, canHover) {
 }
 
 async function openDetail(id) {
+  trackEvent('title_open', { title_id: Number(id) });
   const item = await api(`/titles/${id}`);
   const root = document.getElementById('modal-root');
   const meta = item.type === 'series'
@@ -1461,6 +1534,7 @@ async function render() {
     const query = state.query;
     const items = await api(`/titles?q=${encodeURIComponent(query)}&sort=rating`);
     if (state.route !== 'search' || state.query !== query) return; // superseded by newer typing
+    trackSearch(query, items.length);
     const shown = esc(query);
     content.innerHTML = `
       <div class="section">
@@ -1497,6 +1571,7 @@ async function render() {
   if (state.genre) qs.set('genre', state.genre);
   if (state.query) qs.set('q', state.query);
   const items = await api(`/titles?${qs.toString()}`);
+  if (state.query) trackSearch(state.query, items.length);
   content.innerHTML = `
     <div class="section">
       <div class="section-head"><div class="section-title">${state.route === 'movie' ? 'Movies' : 'TV shows'}</div></div>
