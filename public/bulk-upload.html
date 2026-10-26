@@ -84,6 +84,11 @@
 
 <script>
 const API = '/api';
+// Text from TMDB/AniList imports and the database is shown as text, never as
+// HTML: esc() turns <, >, &, quotes into entities (also inside value="").
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 async function api(path, opts) {
   const res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -265,10 +270,10 @@ function renderRows() {
     const warn = playsInBrowsers(row.file) ? '' : `<div class="bulk-warn">May not play in browsers — MP4 recommended</div>`;
     return `
       <tr data-i="${i}">
-        <td class="bulk-filename" title="${row.file.name}">${row.file.name}${warn}</td>
+        <td class="bulk-filename" title="${esc(row.file.name)}">${esc(row.file.name)}${warn}</td>
         <td><input type="number" min="1" class="season-input" value="${row.season}" /></td>
         <td><input type="number" min="1" class="episode-input" value="${row.episode}" /></td>
-        <td><span class="bulk-match ${match.cls}" data-match>${match.label}</span></td>
+        <td><span class="bulk-match ${match.cls}" data-match>${esc(match.label)}</span></td>
         <td><div class="bulk-progress-track"><div class="bulk-progress-fill" data-progress style="width:${row.progress}%;"></div></div></td>
         <td class="bulk-status" data-status>${row.status}</td>
       </tr>

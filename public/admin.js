@@ -1,4 +1,9 @@
 const API = '/api';
+// Text from TMDB/AniList imports and the database is shown as text, never as
+// HTML: esc() turns <, >, &, quotes into entities (also inside value="").
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 function srtToVtt(srtText) {
   let vtt = srtText.replace(/\r+/g, '');
   vtt = vtt.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
@@ -9,7 +14,7 @@ function renderSubtitleList(subtitles) {
   if (!subtitles || !subtitles.length) return `<div style="font-size:12px; color:var(--text-dim);">No subtitles added yet.</div>`;
   return subtitles.map(s => `
     <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; background:var(--surface-2); border-radius:6px; margin-bottom:6px;">
-      <span style="font-size:12.5px;">${s.label} (${s.lang_code})</span>
+      <span style="font-size:12.5px;">${esc(s.label)} (${esc(s.lang_code)})</span>
       <span class="subtitle-remove-btn" data-id="${s.id}" style="color:var(--red); font-size:11.5px; cursor:pointer;">Remove</span>
     </div>
   `).join('');
@@ -108,10 +113,10 @@ let titles = [];
 function row(t) {
   return `
     <tr data-id="${t.id}">
-      <td>${t.title}</td>
-      <td>${t.type}</td>
+      <td>${esc(t.title)}</td>
+      <td>${esc(t.type)}</td>
       <td>${t.year}</td>
-      <td>${t.genre}</td>
+      <td>${esc(t.genre)}</td>
       <td>${Number(t.rating).toFixed(1)}</td>
       <td><span class="pill ${t.premium ? 'pill-yes' : 'pill-no'}">${t.premium ? 'Yes' : 'No'}</span></td>
       <td><span class="pill ${t.featured ? 'pill-yes' : 'pill-no'}">${t.featured ? 'Yes' : 'No'}</span></td>
@@ -187,10 +192,10 @@ function openForm(existing, prefill) {
             <div class="modal-close" id="form-close" style="position:static; background:var(--surface-2); color:var(--text);">${closeIcon()}</div>
           </div>
           <form id="title-form" class="admin-form">
-            ${posterUrl ? `<img src="${posterUrl}" alt="" style="width:100px; border-radius:8px; align-self:flex-start; border:1px solid var(--border);" />` : ''}
+            ${posterUrl ? `<img src="${esc(posterUrl)}" alt="" style="width:100px; border-radius:8px; align-self:flex-start; border:1px solid var(--border);" />` : ''}
             <div>
               <label>Title</label>
-              <input name="title" value="${t.title || ''}" required />
+              <input name="title" value="${esc(t.title)}" required />
             </div>
             <div class="admin-form-row">
               <div>
@@ -202,43 +207,43 @@ function openForm(existing, prefill) {
               </div>
               <div>
                 <label>Year</label>
-                <input name="year" type="number" value="${t.year || ''}" required />
+                <input name="year" type="number" value="${esc(t.year)}" required />
               </div>
             </div>
             <div class="admin-form-row">
               <div>
                 <label>Genre</label>
                 <select name="genre">
-                  ${GENRES.map(g => `<option value="${g}" ${t.genre === g ? 'selected' : ''}>${g}</option>`).join('')}
+                  ${GENRES.map(g => `<option value="${esc(g)}" ${t.genre === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}
                 </select>
               </div>
               <div>
                 <label>Rating (0-10)</label>
-                <input name="rating" type="number" step="0.1" min="0" max="10" value="${t.rating}" required />
+                <input name="rating" type="number" step="0.1" min="0" max="10" value="${esc(t.rating)}" required />
               </div>
             </div>
             <div class="admin-form-row">
               <div>
                 <label>Runtime (movies, e.g. 1h 52m)</label>
-                <input name="runtime" value="${t.runtime || ''}" />
+                <input name="runtime" value="${esc(t.runtime)}" />
               </div>
               <div>
                 <label>Seasons (series only)</label>
-                <input name="seasons" type="number" value="${t.seasons || ''}" />
+                <input name="seasons" type="number" value="${esc(t.seasons)}" />
               </div>
             </div>
             <div>
               <label>Description</label>
-              <textarea name="description">${t.description || ''}</textarea>
+              <textarea name="description">${esc(t.description)}</textarea>
             </div>
             <div class="admin-form-row">
               <div>
                 <label>Cast</label>
-                <input name="cast" value="${t.cast || ''}" />
+                <input name="cast" value="${esc(t.cast)}" />
               </div>
               <div>
                 <label>${t.type === 'series' ? 'Creator' : 'Director'}</label>
-                <input name="director" value="${t.director || ''}" />
+                <input name="director" value="${esc(t.director)}" />
               </div>
             </div>
             <div>
@@ -248,13 +253,13 @@ function openForm(existing, prefill) {
             <div>
               <label>Poster image</label>
               <div style="display:flex; align-items:center; gap:10px;">
-                <img id="poster-preview" src="${posterUrl || ''}" style="width:44px; height:64px; object-fit:cover; border-radius:6px; background:var(--surface-2); ${posterUrl ? '' : 'display:none;'}" />
+                <img id="poster-preview" src="${esc(posterUrl)}" style="width:44px; height:64px; object-fit:cover; border-radius:6px; background:var(--surface-2); ${posterUrl ? '' : 'display:none;'}" />
                 <input type="file" id="poster-file-input" accept="image/*" style="flex:1;" />
               </div>
               <div id="poster-upload-status" style="font-size:11.5px; color:var(--text-dim); margin-top:4px;"></div>
-              <input type="hidden" name="poster_url" id="poster-url-hidden" value="${posterUrl || ''}" />
+              <input type="hidden" name="poster_url" id="poster-url-hidden" value="${esc(posterUrl)}" />
             </div>
-            <input type="hidden" name="tmdb_id" value="${t.tmdb_id || t.tmdbId || ''}" />
+            <input type="hidden" name="tmdb_id" value="${esc(t.tmdb_id || t.tmdbId)}" />
              <div>
               <label>Subtitles</label>
               <div id="title-subtitle-list">${renderSubtitleList(t.subtitles)}</div>
@@ -265,11 +270,11 @@ function openForm(existing, prefill) {
             </div>
             <div>
               <label>Backdrop image URL (used for the homepage hero — wide image, different from the poster above)</label>
-              <input name="backdrop_url" value="${backdropUrl || ''}" placeholder="https://..." />
+              <input name="backdrop_url" value="${esc(backdropUrl)}" placeholder="https://..." />
             </div>
             <div>
               <label>Video URL — YouTube/Vimeo link, or a direct link to a video file you host</label>
-              <input name="video_url" id="video-url-input" value="${t.video_url || ''}" placeholder="https://youtube.com/watch?v=... or https://.../file.mp4" />
+              <input name="video_url" id="video-url-input" value="${esc(t.video_url)}" placeholder="https://youtube.com/watch?v=... or https://.../file.mp4" />
               <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
                 <span style="font-size:11.5px; color:var(--text-dim);">or upload a file:</span>
                 <input type="file" id="video-file-input" accept="video/*" style="flex:1;" />
@@ -430,10 +435,10 @@ function openTmdbSearch() {
       }
       resultsEl.innerHTML = results.map(r => `
         <div class="tmdb-result" data-id="${r[idKey]}" style="display:flex; gap:12px; padding:8px; border-radius:8px; cursor:pointer; align-items:center;">
-          ${r.posterUrl ? `<img src="${r.posterUrl}" style="width:40px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;" />` : `<div style="width:40px; height:60px; background:var(--surface-2); border-radius:4px; flex-shrink:0;"></div>`}
+          ${r.posterUrl ? `<img src="${esc(r.posterUrl)}" style="width:40px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;" />` : `<div style="width:40px; height:60px; background:var(--surface-2); border-radius:4px; flex-shrink:0;"></div>`}
           <div style="min-width:0;">
-            <div style="font-weight:600; font-size:13.5px;">${r.title}${r.year ? ` (${r.year})` : ''}</div>
-            <div style="font-size:12px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.overview || ''}</div>
+            <div style="font-weight:600; font-size:13.5px;">${esc(r.title)}${r.year ? ` (${r.year})` : ''}</div>
+            <div style="font-size:12px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.overview)}</div>
           </div>
         </div>
       `).join('');
@@ -477,10 +482,10 @@ async function openEpisodeManager(title) {
       ${episodes.filter(e => e.season_number === s).sort((a, b) => a.episode_number - b.episode_number).map(e => `
                 <div style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:8px; border:1px solid var(--border); margin-bottom:6px; flex-wrap:wrap;">
           <div style="flex:1; min-width:0;">
-            <div style="font-size:13px; font-weight:600;">E${e.episode_number} · ${e.name}</div>
-            <div style="font-size:11.5px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${e.video_url || 'No video linked'}</div>
+            <div style="font-size:13px; font-weight:600;">E${e.episode_number} · ${esc(e.name)}</div>
+            <div style="font-size:11.5px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(e.video_url || 'No video linked')}</div>
             <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-              ${(e.subtitles || []).map(s => `<span style="font-size:10.5px; background:var(--surface-2); padding:2px 8px; border-radius:10px;">${s.label} <span class="ep-sub-remove" data-sub-id="${s.id}" data-ep-id="${e.id}" style="color:var(--red); cursor:pointer; margin-left:4px;">×</span></span>`).join('')}
+              ${(e.subtitles || []).map(s => `<span style="font-size:10.5px; background:var(--surface-2); padding:2px 8px; border-radius:10px;">${esc(s.label)} <span class="ep-sub-remove" data-sub-id="${s.id}" data-ep-id="${e.id}" style="color:var(--red); cursor:pointer; margin-left:4px;">×</span></span>`).join('')}
               <label style="font-size:10.5px; color:var(--teal); cursor:pointer;">
                 + Subtitle
                 <input type="file" accept=".srt,.vtt" class="ep-sub-file" data-ep-id="${e.id}" style="display:none;" />
@@ -500,7 +505,7 @@ async function openEpisodeManager(title) {
         <div class="modal" style="max-width:560px;">
           <div class="modal-body">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-              <h2 style="font-family:'Bebas Neue', sans-serif; font-size:24px; font-weight:400; letter-spacing:.5px;">Episodes — ${title.title}</h2>
+              <h2 style="font-family:'Bebas Neue', sans-serif; font-size:24px; font-weight:400; letter-spacing:.5px;">Episodes — ${esc(title.title)}</h2>
               <div class="modal-close" id="ep-close" style="position:static; background:var(--surface-2); color:var(--text);">${closeIcon()}</div>
             </div>
             <div id="ep-list" style="max-height:35vh; overflow-y:auto; margin-bottom:16px;">${renderEpisodeList()}</div>
@@ -669,7 +674,7 @@ async function init() {
   }
   gate.hidden = true;
   document.getElementById('admin-content').hidden = false;
-  document.getElementById('admin-user').innerHTML = `<span style="font-size:13px; color:var(--text-dim);">Signed in as <strong style="color:var(--text);">${user.username}</strong></span>`;
+  document.getElementById('admin-user').innerHTML = `<span style="font-size:13px; color:var(--text-dim);">Signed in as <strong style="color:var(--text);">${esc(user.username)}</strong></span>`;
   document.getElementById('add-title-btn').onclick = () => openForm(null);
   document.getElementById('import-tmdb-btn').onclick = () => openTmdbSearch();
   await loadTitles();

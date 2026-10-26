@@ -89,6 +89,11 @@ app.post('/api/auth/register', ah(async (req, res) => {
   if (!username || !password || password.length < 6) {
     return res.status(400).json({ error: 'Username and a password of at least 6 characters are required.' });
   }
+  // Usernames are shown on pages; keep them to plain characters. (Existing
+  // accounts with other characters can still sign in — this only gates new ones.)
+  if (!/^[A-Za-z0-9_.-]{3,30}$/.test(username)) {
+    return res.status(400).json({ error: 'Usernames can use letters, numbers, dots, dashes and underscores (3–30 characters).' });
+  }
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ error: 'A valid email is required (used for password resets).' });
   }

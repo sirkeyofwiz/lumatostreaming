@@ -5,6 +5,17 @@ const palettes = [
   ['#233A1E', '#101F0C'], ['#3A2A12', '#1C1305'], ['#1F2A44', '#0D1120'],
   ['#442035', '#210F1A'], ['#123B36', '#081E1A'],
 ];
+// Text from the catalog (TMDB/AniList imports, admin edits) and from users
+// is shown as text, never as HTML: esc() turns <, >, &, quotes into entities.
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+// Image addresses inside CSS url('...') — percent-encode anything that could
+// end the url() or the surrounding style="" attribute.
+function cssUrl(value) {
+  return String(value ?? '').replace(/['"()\\\s<>]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
+}
+
 function gradient(seed) {
   const [a, b] = palettes[seed % palettes.length];
   const angle = 120 + (seed * 17) % 90;
@@ -25,7 +36,7 @@ const posterObserver = 'IntersectionObserver' in window
         if (!entry.isIntersecting) return;
         const el = entry.target;
         observer.unobserve(el);
-        el.style.background = `url('${el.dataset.poster}') center/cover no-repeat, ${el.style.background}`;
+        el.style.background = `url('${cssUrl(el.dataset.poster)}') center/cover no-repeat, ${el.style.background}`;
       });
     }, { rootMargin: '400px 200px' })
   : null;
@@ -33,7 +44,7 @@ const posterObserver = 'IntersectionObserver' in window
 function lazyLoadPosters(container) {
   container.querySelectorAll('.poster[data-poster]').forEach((el) => {
     if (posterObserver) posterObserver.observe(el);
-    else el.style.background = `url('${el.dataset.poster}') center/cover no-repeat, ${el.style.background}`;
+    else el.style.background = `url('${cssUrl(el.dataset.poster)}') center/cover no-repeat, ${el.style.background}`;
   });
 }
 function heroBackground(item) {
@@ -42,7 +53,7 @@ function heroBackground(item) {
   // the whole image away and blows up whatever's left (e.g. one giant,
   // zoomed-in face). `contain` shows the whole poster with no cropping;
   // anchoring it to the right keeps it clear of the left-aligned title text.
-  if (item.poster_url) return `url('${item.poster_url}') right center/contain no-repeat, ${gradient(item.palette)}`;
+  if (item.poster_url) return `url('${cssUrl(item.poster_url)}') right center/contain no-repeat, ${gradient(item.palette)}`;
   return gradient(item.palette);
 }
 
@@ -52,7 +63,7 @@ function heroBackground(item) {
 function buildSubtitleTracks(subtitles) {
   if (!subtitles || !subtitles.length) return '';
   return subtitles.map((s, i) => {
-    return `<track kind="subtitles" src="${s.src || `/api/subtitles/${s.id}`}" srclang="${s.lang_code}" label="${s.label}" ${i === 0 ? 'default' : ''}></track>`;
+    return `<track kind="subtitles" src="${s.src || `/api/subtitles/${s.id}`}" srclang="${esc(s.lang_code)}" label="${esc(s.label)}" ${i === 0 ? 'default' : ''}></track>`;
   }).join('');
 }
 function getVideoEmbed(url) {
@@ -136,8 +147,8 @@ async function openPlayer(item) {
     return;
   }
   const playerEl = embed.type === 'iframe'
-    ? `<iframe src="${embed.src}" allow="autoplay; fullscreen" allowfullscreen style="position:absolute; inset:0; width:100%; height:100%; border:0;"></iframe>`
-    : `<video src="${embed.src}" controls autoplay crossorigin="anonymous" style="position:absolute; inset:0; width:100%; height:100%; background:#000;">${buildSubtitleTracks(item.subtitles)}</video>`;
+    ? `<iframe src="${esc(embed.src)}" allow="autoplay; fullscreen" allowfullscreen style="position:absolute; inset:0; width:100%; height:100%; border:0;"></iframe>`
+    : `<video src="${esc(embed.src)}" controls autoplay crossorigin="anonymous" style="position:absolute; inset:0; width:100%; height:100%; background:#000;">${buildSubtitleTracks(item.subtitles)}</video>`;
   // Watch progress only works for direct video files; YouTube/Vimeo embeds
   // don't report their playback position to the page.
   const tracked = embed.type === 'video' && item.watch;
@@ -149,7 +160,7 @@ async function openPlayer(item) {
         <div style="position:relative; width:100%; aspect-ratio:16/9;">
           <div class="modal-close" id="player-close" style="z-index:5;">${closeIcon()}</div>
           ${playerEl}
-          ${nextItem ? `<div class="next-episode-btn" id="next-episode-btn" hidden>Next episode <span>${nextItem.watch.label}</span> ▶</div>` : ''}
+          ${nextItem ? `<div class="next-episode-btn" id="next-episode-btn" hidden>Next episode <span>${esc(nextItem.watch.label)}</span> ▶</div>` : ''}
         </div>
       </div>
     </div>
@@ -283,17 +294,17 @@ function continueCard(t, entry) {
   const pct = entry.upNext || !entry.duration ? 0 : Math.min(100, Math.round((entry.position / entry.duration) * 100));
   const minutesLeft = entry.duration ? Math.max(1, Math.round((entry.duration - entry.position) / 60)) : 0;
   const sub = entry.upNext
-    ? `Up next · ${entry.label}`
+    ? `Up next · ${esc(entry.label)}`
     : [entry.label, minutesLeft ? `${minutesLeft} min left` : ''].filter(Boolean).join(' · ');
   return `
     <div class="card continue-card" data-continue="${t.id}">
-      <div class="poster" style="background:${gradient(t.palette)}"${t.poster_url ? ` data-poster="${cardPosterUrl(t.poster_url)}"` : ''}>
+      <div class="poster" style="background:${gradient(t.palette)}"${t.poster_url ? ` data-poster="${esc(cardPosterUrl(t.poster_url))}"` : ''}>
         <div class="continue-remove" data-remove="${t.id}" title="Remove from Continue watching">${closeIcon()}</div>
         <div class="continue-play">▶</div>
-        <div class="poster-label">${t.title}</div>
+        <div class="poster-label">${esc(t.title)}</div>
         <div class="continue-progress"><div style="width:${pct}%"></div></div>
       </div>
-      <div class="card-title">${t.title}</div>
+      <div class="card-title">${esc(t.title)}</div>
       <div class="card-sub">${sub}</div>
     </div>
   `;
@@ -373,13 +384,13 @@ function renderTopbar() {
   const el = document.getElementById('topbar-actions');
   if (state.user) {
     el.innerHTML = `
-      <div class="user-btn" id="user-btn" title="${state.user.username}">
-        <div class="avatar">${state.user.username[0].toUpperCase()}</div>
+      <div class="user-btn" id="user-btn" title="${esc(state.user.username)}">
+        <div class="avatar">${esc(state.user.username[0].toUpperCase())}</div>
       </div>
       <div class="user-menu" id="user-menu">
         <div class="user-menu-head">
-          <div class="avatar">${state.user.username[0].toUpperCase()}</div>
-          <span>${state.user.username}</span>
+          <div class="avatar">${esc(state.user.username[0].toUpperCase())}</div>
+          <span>${esc(state.user.username)}</span>
           ${state.user.is_admin ? '<span class="tag" style="color:#241706;background:var(--gold)">ADMIN</span>' : ''}
         </div>
         ${state.user.is_admin ? `<a class="user-menu-item" href="/admin.html">Admin panel</a>` : ''}
@@ -557,19 +568,19 @@ async function toggleWatchlist(id, isOn, btnEl) {
 function posterCard(item) {
   const badge = item.premium ? `<div class="badge">PREMIUM</div>` : '';
   const subLine = item.type === 'series'
-    ? `${item.seasons} season${item.seasons > 1 ? 's' : ''} · ${item.genre}`
-    : `${item.year} · ${item.genre}`;
+    ? `${item.seasons} season${item.seasons > 1 ? 's' : ''} · ${esc(item.genre)}`
+    : `${item.year} · ${esc(item.genre)}`;
   return `
     <div class="card" data-id="${item.id}">
-      <div class="poster" style="background:${gradient(item.palette)}"${item.poster_url ? ` data-poster="${cardPosterUrl(item.poster_url)}"` : ''}>
+      <div class="poster" style="background:${gradient(item.palette)}"${item.poster_url ? ` data-poster="${esc(cardPosterUrl(item.poster_url))}"` : ''}>
         ${badge}
         <div class="rating">${starIcon()}${item.rating.toFixed(1)}</div>
         <div class="watch-toggle ${item.in_watchlist ? 'on' : ''}" data-watch-id="${item.id}">
           ${item.in_watchlist ? checkIcon() : plusIcon()}
         </div>
-        <div class="poster-label">${item.title}</div>
+        <div class="poster-label">${esc(item.title)}</div>
       </div>
-      <div class="card-title">${item.title}</div>
+      <div class="card-title">${esc(item.title)}</div>
       <div class="card-sub">${subLine}</div>
     </div>
   `;
@@ -1077,8 +1088,8 @@ async function openDetail(id) {
   const item = await api(`/titles/${id}`);
   const root = document.getElementById('modal-root');
   const meta = item.type === 'series'
-    ? `<span class="tag">${item.seasons} season${item.seasons > 1 ? 's' : ''}</span><span class="tag">${item.genre}</span><span class="tag">${item.year}</span>`
-    : `<span class="tag">${item.runtime}</span><span class="tag">${item.genre}</span><span class="tag">${item.year}</span>`;
+    ? `<span class="tag">${item.seasons} season${item.seasons > 1 ? 's' : ''}</span><span class="tag">${esc(item.genre)}</span><span class="tag">${item.year}</span>`
+    : `<span class="tag">${esc(item.runtime)}</span><span class="tag">${esc(item.genre)}</span><span class="tag">${item.year}</span>`;
 
     const episodes = item.type === 'series' ? await api(`/titles/${id}/episodes`) : [];
   const seasons = [...new Set(episodes.map(e => e.season_number))];
@@ -1091,14 +1102,14 @@ async function openDetail(id) {
       <div class="row">
         ${episodes.filter(e => e.season_number === s).map(e => `
           <div class="episode-card">
-            <div class="episode-card-thumb" data-ep-id="${e.id}" data-video="${e.video_url || ''}" data-title="${item.title} — S${e.season_number}E${e.episode_number}">
-              ${isDirectFile(e.video_url) ? `<video class="episode-card-preview" data-src="${e.video_url}" muted playsinline preload="none"></video>` : ''}
+            <div class="episode-card-thumb" data-ep-id="${e.id}" data-video="${esc(e.video_url || '')}" data-title="${esc(item.title)} — S${e.season_number}E${e.episode_number}">
+              ${isDirectFile(e.video_url) ? `<video class="episode-card-preview" data-src="${esc(e.video_url)}" muted playsinline preload="none"></video>` : ''}
               <div class="episode-card-num">E${e.episode_number}</div>
               <div class="episode-card-play">▶</div>
             </div>
-            <div class="episode-card-name">${e.name}</div>
+            <div class="episode-card-name">${esc(e.name)}</div>
                       ${isDirectFile(e.video_url) ? `
-              ${offlineButtonHtml(`episode-${e.id}`, 'episode-download-btn', `data-video="${e.video_url}" data-title="${item.title} — S${e.season_number}E${e.episode_number} — ${e.name}"`)}
+              ${offlineButtonHtml(`episode-${e.id}`, 'episode-download-btn', `data-video="${esc(e.video_url)}" data-title="${esc(item.title)} — S${e.season_number}E${e.episode_number} — ${esc(e.name)}"`)}
             ` : ''}
           </div>
         `).join('')}
@@ -1115,13 +1126,13 @@ async function openDetail(id) {
       <div class="modal">
         <div class="modal-hero" style="background:${heroBackground(item)}">
           <div class="modal-close" id="modal-close">${closeIcon()}</div>
-          <div class="modal-hero-title">${item.title}</div>
+          <div class="modal-hero-title">${esc(item.title)}</div>
         </div>
         <div class="modal-body">
           <div class="modal-meta">${meta}${item.premium ? '<span class="tag" style="color:#241706;background:var(--gold)">PREMIUM</span>' : ''}</div>
-          <div class="modal-desc">${item.description}</div>
-          <div class="modal-row"><span class="label">Cast</span><span>${item.cast}</span></div>
-          <div class="modal-row"><span class="label">${item.type === 'series' ? 'Creator' : 'Director'}</span><span>${item.director}</span></div>
+          <div class="modal-desc">${esc(item.description)}</div>
+          <div class="modal-row"><span class="label">Cast</span><span>${esc(item.cast)}</span></div>
+          <div class="modal-row"><span class="label">${item.type === 'series' ? 'Creator' : 'Director'}</span><span>${esc(item.director)}</span></div>
           <div class="modal-row"><span class="label">Rating</span><span>${item.rating.toFixed(1)} / 10</span></div>
           <div class="modal-actions">
             <div class="btn btn-gold" id="modal-play">${playButtonLabel(item, episodes)}</div>
@@ -1177,7 +1188,7 @@ function heroImage(item) {
     const url = window.innerWidth < 860
       ? item.backdrop_url.replace('image.tmdb.org/t/p/w1280/', 'image.tmdb.org/t/p/w780/')
       : item.backdrop_url;
-    return `url('${url}') center 25%/cover no-repeat, ${gradient(item.palette)}`;
+    return `url('${cssUrl(url)}') center 25%/cover no-repeat, ${gradient(item.palette)}`;
   }
   return heroBackground(item);
 }
@@ -1209,21 +1220,21 @@ function renderHero(featured, topMovies, topSeries) {
       item.rating ? `<span class="star">${starIcon()} ${Number(item.rating).toFixed(1)}</span>` : '',
       item.year,
       isSeries ? 'Series' : 'Movie',
-      ...genres,
+      ...genres.map(esc),
     ].filter(Boolean);
     const badges = [
       rank && rank <= 10 ? `<span class="badge-icon">TOP</span> #${rank} in ${isSeries ? 'shows' : 'movies'}` : '',
       item.premium ? `<span class="badge-icon">★</span> Premium` : '',
-      isSeries && item.seasons ? `${item.seasons} season${item.seasons > 1 ? 's' : ''}` : (!isSeries && item.runtime ? item.runtime : ''),
+      isSeries && item.seasons ? `${item.seasons} season${item.seasons > 1 ? 's' : ''}` : (!isSeries && item.runtime ? esc(item.runtime) : ''),
     ].filter(Boolean).slice(0, 2);
 
     slot.innerHTML = `
       <div class="hero">
         <div class="hero-bg" style="background:${heroImage(item)}"></div>
         <div class="hero-content">
-          <div class="hero-title">${item.title.toUpperCase()}</div>
+          <div class="hero-title">${esc(item.title.toUpperCase())}</div>
           <div class="hero-meta">${meta.join('<span class="sep">·</span>')}</div>
-          <div class="hero-desc">${item.description || ''}</div>
+          <div class="hero-desc">${esc(item.description)}</div>
           <div class="hero-actions">
             <div class="hero-btn hero-btn-play" id="hero-play">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></svg>
@@ -1270,7 +1281,7 @@ async function renderFilterBar() {
   if (!state.genres.length) state.genres = await api('/genres');
   bar.hidden = false;
   bar.innerHTML = `<div class="chip ${state.genre === '' ? 'active' : ''}" data-genre="">All genres</div>` +
-    state.genres.map(g => `<div class="chip ${state.genre === g ? 'active' : ''}" data-genre="${g}">${g}</div>`).join('');
+    state.genres.map(g => `<div class="chip ${state.genre === g ? 'active' : ''}" data-genre="${esc(g)}">${esc(g)}</div>`).join('');
   bar.querySelectorAll('.chip').forEach(chip => {
     chip.addEventListener('click', () => {
       state.genre = chip.dataset.genre;
@@ -1305,11 +1316,11 @@ async function renderDownloadsPage() {
       ${inProgress.map(([key, d]) => `
         <div class="download-row" data-key="${key}">
           <div style="min-width:0; flex:1;">
-            <div style="font-weight:600; font-size:14px; margin-bottom:8px;">${d.title}</div>
+            <div style="font-weight:600; font-size:14px; margin-bottom:8px;">${esc(d.title)}</div>
             <div class="download-progress-track">
               <div class="download-progress-fill${d.status === 'failed' ? ' paused' : ''}" data-key="${key}" style="width:${d.progress}%;"></div>
             </div>
-            ${d.status === 'failed' ? `<div style="font-size:12px; color:var(--red); margin-top:6px;">${d.error}</div>` : ''}
+            ${d.status === 'failed' ? `<div style="font-size:12px; color:var(--red); margin-top:6px;">${esc(d.error)}</div>` : ''}
           </div>
           <div class="download-progress-label" data-key="${key}" style="font-size:12px; color:var(--text-dim); flex-shrink:0;">${downloadStatusText(d)}</div>
           <div style="display:flex; gap:8px; flex-shrink:0;">
@@ -1330,7 +1341,7 @@ async function renderDownloadsPage() {
           ${saved.sort((a, b) => b.savedAt - a.savedAt).map(v => `
             <div class="download-row" data-key="${v.key}">
               <div style="min-width:0;">
-                <div style="font-weight:600; font-size:14px;">${v.title}</div>
+                <div style="font-weight:600; font-size:14px;">${esc(v.title)}</div>
                 <div style="font-size:12px; color:var(--text-dim); margin-top:2px;">${formatBytes(v.blob.size)} · saved ${new Date(v.savedAt).toLocaleDateString()}</div>
               </div>
               <div style="display:flex; gap:8px; flex-shrink:0;">
@@ -1428,7 +1439,7 @@ async function render() {
 
     const section = (title, items) => items.length ? `
       <div class="section">
-        <div class="section-head"><div class="section-title">${title}</div></div>
+        <div class="section-head"><div class="section-title">${esc(title)}</div></div>
         <div class="row">${items.map(posterCard).join('')}</div>
       </div>
     ` : '';
@@ -1450,7 +1461,7 @@ async function render() {
     const query = state.query;
     const items = await api(`/titles?q=${encodeURIComponent(query)}&sort=rating`);
     if (state.route !== 'search' || state.query !== query) return; // superseded by newer typing
-    const shown = query.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const shown = esc(query);
     content.innerHTML = `
       <div class="section">
         <div class="section-head"><div class="section-title">Results for “${shown}”</div></div>
