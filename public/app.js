@@ -291,6 +291,9 @@ function starIcon() {
 function plusIcon() {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>`;
 }
+function infoIcon() {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>`;
+}
 function checkIcon() {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12l5 5L20 7"/></svg>`;
 }
@@ -589,6 +592,7 @@ function posterCard(item) {
         <div class="watch-toggle ${item.in_watchlist ? 'on' : ''}" data-watch-id="${item.id}">
           ${item.in_watchlist ? checkIcon() : plusIcon()}
         </div>
+        <div class="info-toggle" data-info-id="${item.id}" role="button" aria-label="More info" title="More info">${infoIcon()}</div>
         <div class="poster-label">${esc(item.title)}</div>
       </div>
       <div class="card-title">${esc(item.title)}</div>
@@ -609,8 +613,16 @@ function attachCardHandlers(container) {
       toggleWatchlist(id, isOn, btn);
     });
   });
+  // Posters start playing straight away (the first episode, or where the
+  // viewer stopped); the ⓘ button opens the details pop-up instead.
+  container.querySelectorAll('.info-toggle').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openDetail(btn.dataset.infoId);
+    });
+  });
   container.querySelectorAll('.card:not(.continue-card)').forEach(card => {
-    card.addEventListener('click', () => openDetail(card.dataset.id));
+    card.addEventListener('click', () => playTitle(card.dataset.id));
   });
   // Continue watching cards play straight away; their ✕ drops the title
   // from the row.
