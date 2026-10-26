@@ -478,6 +478,7 @@ async function openPlayer(item) {
   // shows/hides the controls and a double tap on either side skips 10 s.
   let lastTap = 0, tapTimer = null;
   listen(lp, 'pointerup', (e) => {
+    if (panel && !panel.hidden && !e.target.closest('.lp-panel')) { closePanel(); return; }
     const onPicture = e.target === video || e.target.classList.contains('lp-shade') || e.target.classList.contains('lp-poster');
     if (!onPicture) return;
     if (e.pointerType === 'mouse') { togglePlay(); return; }
@@ -592,6 +593,8 @@ async function openPlayer(item) {
     const curIndex = w.index;
     const desc = w.show.description || '';
 
+    const art = playerBackdrop(item);
+
     panel.innerHTML = `
       <div class="lp-panel-head">
         <div class="lp-panel-row">
@@ -599,14 +602,18 @@ async function openPlayer(item) {
             <span class="lp-sr">Season</span>
             <select data-season>${seasons.map((s) => `<option value="${s}" ${s === panelSeason ? 'selected' : ''}>Season ${s}</option>`).join('')}</select>
           </label>
-          <div class="lp-panel-tools">
-            <label class="lp-search">${PI.search}<span class="lp-sr">Search episodes</span><input type="search" placeholder="Search" value="${esc(panelQuery)}" data-ep-search /></label>
+          <div class="lp-search">
+            ${PI.search}
+            <label class="lp-sr" for="lp-ep-search">Search episodes</label>
+            <input id="lp-ep-search" type="search" placeholder="Search" value="${esc(panelQuery)}" data-ep-search autocomplete="off" />
+            <span class="lp-search-divider"></span>
             <button type="button" class="lp-autoplay" role="switch" aria-checked="${auto}" title="Autoplay next episode" data-autoplay>${PI.next}<span class="lp-switch ${auto ? 'is-on' : ''}"><span></span></span><span class="lp-sr">Autoplay next episode</span></button>
           </div>
-          <button type="button" class="lp-icon-btn lp-panel-close" aria-label="Close episodes">${PI.close}</button>
+          <button type="button" class="lp-panel-close" aria-label="Close episodes">${PI.close}</button>
         </div>
         <div class="lp-panel-row">
-          <button type="button" class="lp-spoiler ${hide ? 'is-on' : ''}" aria-pressed="${hide}" data-spoiler>${hide ? PI.eyeOff : PI.eye}<span>${hide ? 'Spoilers hidden' : 'Spoilers shown'}</span></button>
+          <div class="lp-panel-box"><span class="lp-panel-box-label">Episodes</span><span class="lp-panel-box-value">${list.length} of ${inSeason}</span></div>
+          <button type="button" class="lp-spoiler ${hide ? 'is-on' : ''}" aria-pressed="${hide}" title="${hide ? 'Later episodes are hidden' : 'All episodes are shown'}" data-spoiler>${hide ? PI.eyeOff : PI.eye}<span>SPOILER</span></button>
         </div>
         <div class="lp-season-info">
           <div class="lp-season-title">Season ${panelSeason}</div>
@@ -620,16 +627,18 @@ async function openPlayer(item) {
           const locked = hide && i > curIndex && !revealed.has(e.id);
           const playable = !!e.video_url;
           const direct = playable && isDirectFile(e.video_url);
+          const name = locked ? `Episode ${e.episode_number}` : `${e.episode_number}. ${esc(e.name || `Episode ${e.episode_number}`)}`;
+          const label = locked ? `Reveal episode ${e.episode_number}` : playable ? `Play episode ${e.episode_number}` : `Episode ${e.episode_number}, video coming soon`;
           return `
-          <div class="lp-ep ${isCurrent ? 'is-current' : ''} ${locked ? 'is-locked' : ''} ${playable ? '' : 'is-unavailable'}" data-ep-index="${i}">
-            <button type="button" class="lp-ep-thumb" ${playable && !locked ? '' : 'tabindex="-1"'} aria-label="${locked ? 'Reveal episode' : `Play episode ${e.episode_number}`}">
-              ${direct && !locked ? `<video muted playsinline preload="none" data-thumb-src="${esc(e.video_url)}"></video>` : ''}
-              <span class="lp-ep-num">E${e.episode_number}</span>
-              ${locked ? `<span class="lp-ep-lock">${PI.lock}<span>Click to reveal</span></span>` : playable ? `<span class="lp-ep-play">${PI.play}</span>` : ''}
-              ${isCurrent ? '<span class="lp-ep-now">Now playing</span>' : ''}
-            </button>
-            <div class="lp-ep-body">
-              <div class="lp-ep-title">${e.episode_number}. ${locked ? `Episode ${e.episode_number}` : esc(e.name || `Episode ${e.episode_number}`)}</div>
+          <div class="lp-ep ${isCurrent ? 'is-current' : ''} ${locked ? 'is-locked' : ''} ${playable ? '' : 'is-unavailable'}" data-ep-index="${i}" role="button" tabindex="0" aria-label="${label}">
+            <div class="lp-ep-art" style="background-image:${art}">
+              ${direct ? `<video muted playsinline preload="none" data-thumb-src="${esc(e.video_url)}"></video>` : ''}
+            </div>
+            <div class="lp-ep-fade"></div>
+            ${isCurrent ? '<span class="lp-ep-badge">WATCHING</span>' : ''}
+            ${locked ? `<span class="lp-ep-lock">${PI.lock}<span>Click to reveal</span></span>` : playable && !isCurrent ? `<span class="lp-ep-play">${PI.play}</span>` : ''}
+            <div class="lp-ep-info">
+              <div class="lp-ep-title">${name}</div>
               <div class="lp-ep-meta" data-ep-duration>${playable ? '' : 'Video coming soon'}</div>
               ${!locked && e.description ? `<div class="lp-ep-desc">${esc(e.description)}</div>` : ''}
             </div>
@@ -653,12 +662,14 @@ async function openPlayer(item) {
     panel.querySelectorAll('.lp-ep').forEach((card) => {
       const i = Number(card.dataset.epIndex);
       const ep = w.episodes[i];
-      card.querySelector('.lp-ep-thumb').onclick = () => {
+      const choose = () => {
         if (card.classList.contains('is-locked')) { revealed.add(ep.id); renderPanel(); return; }
         if (!ep.video_url) return;
         if (i === w.index) { closePanel(); if (video.paused) video.play().catch(() => {}); return; }
         openPlayer(episodePlayItem(w.show, w.episodes, i));
       };
+      card.onclick = choose;
+      card.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); choose(); } };
     });
     loadThumbs();
   }
