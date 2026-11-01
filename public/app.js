@@ -803,17 +803,26 @@ function offlineButtonState(key) {
   return { cls: '', html: `${downloadIcon()} Save offline` };
 }
 
-// HTML for a download button; `classes` are its base classes.
-function offlineButtonHtml(key, classes, attrs = '') {
+// The player's small buttons say just "Save", "45%", "Saved".
+function compactOfflineState(key) {
   const s = offlineButtonState(key);
-  return `<div class="${classes} offline-btn ${s.cls}" data-key="${key}" ${attrs}>${s.html}</div>`;
+  const d = activeDownloads.get(key);
+  const label = s.cls === 'is-saved' ? 'Saved' : s.cls === 'is-paused' ? 'Resume' : s.cls === 'is-downloading' ? `${d.progress}%` : 'Save';
+  return { cls: s.cls, html: `${s.cls === 'is-saved' ? checkIcon() : downloadIcon()}<span>${label}</span>` };
+}
+
+// HTML for a download button; `classes` are its base classes.
+function offlineButtonHtml(key, classes, attrs = '', compact = false) {
+  const s = compact ? compactOfflineState(key) : offlineButtonState(key);
+  return `<div class="${classes} offline-btn ${compact ? 'is-compact' : ''} ${s.cls}" data-key="${key}" ${attrs}>${s.html}</div>`;
 }
 
 // Redraws every visible download button for this video (a series' first
 // episode can appear twice: the main button and its episode card).
 function updateOfflineButtons(key) {
-  const s = offlineButtonState(key);
+  const full = offlineButtonState(key);
   document.querySelectorAll(`.offline-btn[data-key="${key}"]`).forEach((btn) => {
+    const s = btn.classList.contains('is-compact') ? compactOfflineState(key) : full;
     btn.classList.remove('is-saved', 'is-paused', 'is-downloading');
     if (s.cls) btn.classList.add(s.cls);
     btn.innerHTML = s.html;

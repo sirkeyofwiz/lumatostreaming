@@ -58,6 +58,20 @@ function playerBackdrop(item) {
   return url ? `url('${cssUrl(url)}')` : 'none';
 }
 
+// What "Save offline" in the player saves: the episode or movie on screen,
+// with the same key the details pop-up uses, so both show the same state.
+function playerSaveTarget(item) {
+  if (item.offlineKey) return null;
+  const w = item.watch;
+  if (w && w.episodes) {
+    const ep = w.episodes[w.index];
+    if (!ep || !isDirectFile(ep.video_url)) return null;
+    return { key: `episode-${ep.id}`, url: ep.video_url, meta: { title: `${w.show.title} — S${ep.season_number}E${ep.episode_number} — ${ep.name}`, subtitles: ep.subtitles } };
+  }
+  if (!isDirectFile(item.video_url) || !item.id) return null;
+  return { key: `title-${item.id}`, url: item.video_url, meta: { title: item.title, poster_url: item.poster_url, subtitles: item.subtitles } };
+}
+
 let activePlayer = null; // tears down the open player (listeners, timers)
 
 async function openPlayer(item) {
@@ -86,6 +100,7 @@ async function openPlayer(item) {
   const isEpisode = !!(w && w.episodes);
   const nextItem = w ? nextEpisodeItem(w) : null;
   const curEp = isEpisode ? w.episodes[w.index] : null;
+  const save = playerSaveTarget(item);
 
   const root = showModal(`
     <div class="lp lp-paused lp-fresh lp-sub-${prefs.subSize}" tabindex="-1" role="region" aria-label="Video player">
@@ -164,6 +179,7 @@ async function openPlayer(item) {
             ${nextItem ? `<button type="button" class="lp-icon-btn lp-next" aria-label="Next episode" title="Next episode">${PI.next}</button>` : ''}
           </div>
           <div class="lp-controls-right">
+            ${save ? offlineButtonHtml(save.key, 'lp-save', 'role="button" tabindex="0" aria-label="Save offline" title="Save to watch offline"', true) : ''}
             <button type="button" class="lp-icon-btn lp-full" aria-label="Full screen">${PI.full}</button>
           </div>
         </div>
@@ -375,6 +391,14 @@ async function openPlayer(item) {
   };
   listen(document, 'fullscreenchange', syncFullscreen);
   syncFullscreen();
+
+  // ---------- Save offline ----------
+  if (save) {
+    const saveBtn = $('.lp-save');
+    const saveNow = () => downloadForOffline(save.key, save.url, save.meta);
+    saveBtn.onclick = saveNow;
+    saveBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); saveNow(); } };
+  }
 
   // ---------- Menus: Quality (and speed), Audio & Subtitles ----------
   const menus = lp.querySelectorAll('[data-menu]');
@@ -649,6 +673,7 @@ async function openPlayer(item) {
             <div class="lp-ep-fade"></div>
             ${isCurrent ? '<span class="lp-ep-badge">WATCHING</span>' : ''}
             ${locked ? `<span class="lp-ep-lock">${PI.lock}<span>Click to reveal</span></span>` : playable && !isCurrent ? `<span class="lp-ep-play">${PI.play}</span>` : ''}
+            ${direct && !locked ? offlineButtonHtml(`episode-${e.id}`, 'lp-ep-save', `role="button" tabindex="0" aria-label="Save episode ${e.episode_number} offline"`, true) : ''}
             <div class="lp-ep-info">
               <div class="lp-ep-title">${name}</div>
               <div class="lp-ep-meta" data-ep-duration>${playable ? '' : 'Video coming soon'}</div>
@@ -681,6 +706,15 @@ async function openPlayer(item) {
         openPlayer(episodePlayItem(w.show, w.episodes, i));
       };
       card.onclick = choose;
+      const saveChip = card.querySelector('.lp-ep-save');
+      if (saveChip) {
+        const saveEp = (e) => {
+          e.stopPropagation();
+          downloadForOffline(`episode-${ep.id}`, ep.video_url, { title: `${w.show.title} — S${ep.season_number}E${ep.episode_number} — ${ep.name}`, subtitles: ep.subtitles });
+        };
+        saveChip.onclick = saveEp;
+        saveChip.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); saveEp(e); } };
+      }
       card.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); choose(); } };
     });
     loadThumbs();
