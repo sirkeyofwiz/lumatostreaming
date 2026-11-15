@@ -1267,10 +1267,14 @@ function renderHero(featured, topMovies, topSeries) {
       item.premium ? `<span class="badge-icon">★</span> Premium` : '',
       isSeries && item.seasons ? `${item.seasons} season${item.seasons > 1 ? 's' : ''}` : (!isSeries && item.runtime ? esc(item.runtime) : ''),
     ].filter(Boolean).slice(0, 2);
+    // A title with only a tall poster (no wide backdrop) fills the banner
+    // with a blurred, enlarged copy behind the sharp poster.
+    const posterOnly = !item.backdrop_url && !!item.poster_url;
 
     slot.innerHTML = `
       <div class="hero">
-        <div class="hero-bg" style="background:${heroImage(item)}"></div>
+        ${posterOnly ? `<div class="hero-bg hero-bg-fill" style="background-image:url('${cssUrl(item.poster_url)}')"></div>` : ''}
+        <div class="hero-bg ${posterOnly ? 'hero-bg-poster' : ''}" style="background:${posterOnly ? `url('${cssUrl(item.poster_url)}') right 8% center/contain no-repeat` : heroImage(item)}"></div>
         <div class="hero-content">
           <div class="hero-title">${esc(item.title.toUpperCase())}</div>
           <div class="hero-meta">${meta.join('<span class="sep">·</span>')}</div>

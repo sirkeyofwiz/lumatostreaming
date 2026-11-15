@@ -92,6 +92,8 @@ main{flex:1; min-width:0; padding:0 0 40px;}
 /* ---------- Hero ---------- */
 .hero{position:relative; height:min(88vh, 860px); min-height:520px; margin-bottom:28px; overflow:hidden; background:var(--bg);}
 .hero-bg{position:absolute; inset:0; animation:hero-fade .8s ease;}
+.hero-bg-fill{background-size:cover; background-position:center; filter:blur(30px) brightness(.95) saturate(1.35); transform:scale(1.15);}
+.hero-bg-poster{top:11%; bottom:clamp(170px, 30vh, 270px); filter:drop-shadow(0 20px 50px rgba(0,0,0,.7));}
 /* Darken the left (behind the text) and fade the bottom into the page. */
 .hero::after{content:""; position:absolute; inset:0; pointer-events:none;
   background:
