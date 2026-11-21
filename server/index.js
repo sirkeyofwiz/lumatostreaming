@@ -12,6 +12,7 @@ const anilist = require('./anilist');
 const mailer = require('./mailer');
 const storage = require('./storage');
 const push = require('./push');
+const seo = require('./seo');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -55,6 +56,9 @@ app.use(session({
     ? new PgSession({ pool: db.pool, tableName: 'session', createTableIfMissing: true })
     : undefined,
 }));
+// Pages search engines read (/, /title/..., sitemap, robots) come before the
+// plain files so the home page gets its details filled in.
+seo.routes(app, ah);
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use(async (req, res, next) => {
@@ -689,6 +693,7 @@ app.post('/api/admin/titles', requireAdmin, ah(async (req, res) => {
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [result.lastID]);
   await insights.logAdmin(req, 'title.create', row.title, row.type);
+  seo.forgetCatalog();
   if (row.video_url) {
     await insights.logAdmin(req, 'video.set', row.title, 'movie video added');
     if (row.type === 'movie') push.videoAdded(row.id);
@@ -716,6 +721,7 @@ app.put('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
   );
   const row = await db.get('SELECT * FROM titles WHERE id = ?', [req.params.id]);
   await insights.logAdmin(req, 'title.update', row.title);
+  seo.forgetCatalog();
   if (row.video_url && row.video_url !== existing.video_url) await insights.logAdmin(req, 'video.set', row.title, 'movie video changed');
   if (row.type === 'movie' && row.video_url && !existing.video_url) push.videoAdded(row.id);
   res.json(row);
@@ -725,6 +731,7 @@ app.delete('/api/admin/titles/:id', requireAdmin, ah(async (req, res) => {
   const existing = await db.get('SELECT title FROM titles WHERE id = ?', [req.params.id]);
   await db.run('DELETE FROM titles WHERE id = ?', [req.params.id]);
   if (existing) await insights.logAdmin(req, 'title.delete', existing.title);
+  seo.forgetCatalog();
   res.json({ ok: true });
 }));
 

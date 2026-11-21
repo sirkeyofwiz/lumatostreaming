@@ -47,6 +47,16 @@ function lazyLoadPosters(container) {
     else el.style.background = `url('${cssUrl(el.dataset.poster)}') center/cover no-repeat, ${el.style.background}`;
   });
 }
+// Each title's own address, e.g. /title/276-avengers-endgame-encore.
+// Must match slugify() in server/seo.js.
+function titlePath(item) {
+  const slug = String(item.title || '')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    .slice(0, 60) || 'title';
+  return `/title/${item.id}-${slug}`;
+}
+
 function heroBackground(item) {
   // The hero banner and modal header are wide/landscape, but movie posters
   // are tall/portrait — `cover` on a mismatched aspect ratio crops almost
@@ -112,8 +122,10 @@ function closeModal() {
   else clearModal();
 }
 
+const SITE_TITLE = 'LumatoStreaming — Watch Movies, Series & Anime Online';
 function clearModal() {
   document.getElementById('modal-root').innerHTML = '';
+  document.title = SITE_TITLE;
   runModalCleanup(); // saves the watching position before any update reload
   if (updatePending) window.location.reload();
 }
@@ -442,6 +454,13 @@ function renderTopbar() {
 }
 
 document.addEventListener('click', (e) => {
+  const link = e.target.closest && e.target.closest('a[href^="/title/"]');
+  if (link && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+    e.preventDefault();
+    // A poster's own click already started it playing.
+    if (!link.closest('.card')) openDetail(link.getAttribute('href').match(/^\/title\/(\d+)/)[1]).catch(() => {});
+    return;
+  }
   const menu = document.getElementById('user-menu');
   if (menu && !e.target.closest('#user-menu')) menu.classList.remove('open');
 });
@@ -599,7 +618,7 @@ function posterCard(item) {
         <div class="info-toggle" data-info-id="${item.id}" role="button" aria-label="More info" title="More info">${infoIcon()}</div>
         <div class="poster-label">${esc(item.title)}</div>
       </div>
-      <div class="card-title">${esc(item.title)}</div>
+      <a class="card-title" href="${titlePath(item)}">${esc(item.title)}</a>
       <div class="card-sub">${subLine}</div>
     </div>
   `;
@@ -1186,6 +1205,8 @@ async function openDetail(id) {
       </div>
     </div>
   `);
+  if (history.state && history.state.modal) history.replaceState(history.state, '', titlePath(item));
+  document.title = `${item.title}${item.year ? ` (${item.year})` : ''} — LumatoStreaming`;
   document.getElementById('modal-close').onclick = closeModal;
   document.getElementById('modal-play').onclick = () => startTitle(item, episodes);
    const downloadBtn = document.getElementById('modal-download');
@@ -1579,8 +1600,8 @@ const ROUTE_HASH = {
 };
 
 function routeUrl(route) {
-  if (route === 'search') return `#search?q=${encodeURIComponent(state.query)}`;
-  return ROUTE_HASH[route] ? `#${ROUTE_HASH[route]}` : location.pathname;
+  if (route === 'search') return `/#search?q=${encodeURIComponent(state.query)}`;
+  return ROUTE_HASH[route] ? `/#${ROUTE_HASH[route]}` : '/';
 }
 
 function routeFromLocation() {
@@ -1809,6 +1830,7 @@ async function openFromLink(params) {
 
 // Open the page the address points at (e.g. after a refresh on #movies).
 const linkParams = new URLSearchParams(location.search);
+const titleMatch = location.pathname.match(/^\/title\/(\d+)/);
 const initial = routeFromLocation();
 state.route = initial.route;
 state.query = initial.query;
@@ -1819,6 +1841,7 @@ refreshUser().then(() => { if (state.route === 'watchlist') render(); });
 render();
 resumePendingDownloads();
 openFromLink(linkParams);
+if (titleMatch && !linkParams.get('play')) openDetail(titleMatch[1]).catch(() => showToast("Couldn't open that title."));
 refreshPushSubscription();
 // A returning viewer gets the notifications prompt after looking around.
 try {
